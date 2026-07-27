@@ -214,10 +214,38 @@ has to re-execute the message before it can serve you a receipt, not the executi
 itself. Useful side effect: you can check a decoded transaction set against that
 hash, and a mismatch at a sequence number you have already seen is a feed reorg.
 
-**The feed is unsigned.** `signatureV2` and `blockMetadata` come through empty on
-Robinhood's mainnet feed, so nothing cryptographically ties a message to Robinhood's
-sequencer — anything on the path could forge one. Checking the block hash against a
-node is the only verification available.
+**The feed is signed.** Every message carries a 65-byte ECDSA signature in
+`signatureV2` — 550 for 550 sampled on 2026-07-27, across two independent
+connections. Arbitrum One's public feed carries none, so this is one of the two
+places Robinhood's feed actually differs from stock. Watch the field name: there is
+no `signature` key in the envelope, only `signatureV2`, and reading the former makes
+a signed feed look unsigned.
+
+The signature commits to
+`keccak256("Arbitrum Nitro Feed:" ‖ chainId ‖ sequenceNumber ‖ blockHash ‖ blockMetadata ‖ delayedMessagesRead ‖ kind ‖ sender ‖ blockNumber ‖ timestamp ‖ requestId? ‖ baseFeeL1? ‖ l2Msg)`
+— see `BroadcastFeedMessage.SignatureHash` in
+[`broadcaster/message/message.go`](https://github.com/OffchainLabs/nitro/blob/master/broadcaster/message/message.go).
+Two details will cost you an afternoon if you reimplement it: `requestId` and
+`baseFeeL1` are *omitted entirely* when nil rather than written as zeros, and
+`baseFeeL1` goes in as Go's `big.Int.Bytes()` — minimal-length big-endian — so a
+zero base fee contributes no bytes at all, not 32.
+
+Recovering the signer over 40 consecutive messages yields exactly one address,
+`0xDaa526086787d9DEbE1D7F3FFdb1fE50cf8687F4`, and `isBatchPoster()` on the L1
+`SequencerInbox` returns true for it. The same key signs the feed and posts batches
+to Ethereum, so the chain of trust terminates in L1 state rather than in Robinhood's
+word for it. That is exactly what a stock Nitro client checks — recover, then
+`IsBatchPosterOrSequencer` against the SequencerInbox, enabled by default via
+`--feed.input.verify.accept-sequencer`. A forged message from anything on the path is
+therefore detectable, not merely unlikely. (Sanity check when porting this: recompute
+with the wrong `chainId` and the recovered addresses should scatter across messages.
+If they stay consistent, your preimage isn't binding what you think it is.)
+
+`blockMetadata`, by contrast, really is empty — 0 for 550. On Arbitrum One it is
+present on every message, carrying Timeboost's express-lane bitmap. Its absence here
+means no Timeboost: no express lane, no bidding your way to the front of a block.
+Ordering is whatever reaches the sequencer first, which is why latency work on this
+chain pays off in a way it does not on Arbitrum One.
 
 **The backlog.** Every new client — of the public feed *and* of your own relay — is
 replayed history before live messages start. Measured against a local relay:
