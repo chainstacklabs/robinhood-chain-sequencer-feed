@@ -4,7 +4,7 @@
     rhfeed capture --seconds 300 out.jsonl
     rhfeed watch --feed mainnet           # straight at the public feed, for a look
 
-Both default to `ws://127.0.0.1:9642`, which is where `docker compose up relay`
+Both default to `ws://127.0.0.1:9642`, which is where `docker compose up -d relay`
 puts the official Nitro relay. Point `--feed` at a public endpoint only for a quick
 look — Robinhood rate-limits those per client, not per connection.
 
@@ -192,6 +192,7 @@ FEED_HELP = (
     f"relay URL (default {DEFAULT_RELAY}), or 'mainnet' / 'testnet' for Robinhood's "
     "public feed. Accepted before or after the subcommand"
 )
+QUIET_HELP = "only report problems on stderr, not connection and backlog progress"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -201,11 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--feed", default=DEFAULT_RELAY, help=FEED_HELP)
-    ap.add_argument(
-        "--quiet",
-        action="store_true",
-        help="suppress the connection and backlog notes on stderr",
-    )
+    ap.add_argument("--quiet", action="store_true", help=QUIET_HELP)
 
     # The same options again on every subcommand, so that `rhfeed watch --feed
     # mainnet` works as well as `rhfeed --feed mainnet watch`. SUPPRESS is what makes
@@ -213,7 +210,9 @@ def build_parser() -> argparse.ArgumentParser:
     # given before the subcommand.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--feed", default=argparse.SUPPRESS, help=FEED_HELP)
-    common.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS)
+    common.add_argument(
+        "--quiet", action="store_true", default=argparse.SUPPRESS, help=QUIET_HELP
+    )
 
     sub = ap.add_subparsers(dest="command", required=True)
 

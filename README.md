@@ -60,9 +60,13 @@ memory and ~1.6% of a core, nothing written to disk. It is *not* a full node.
 ## Filter it
 
 ```bash
-uv run rhfeed watch --selector 0x095ea7b3     # ERC-20 approvals only
-uv run rhfeed watch --to 0xcaf681a6...        # one contract
-uv run rhfeed watch --sender 0xabc...         # one wallet
+# ERC-20 approvals only
+uv run rhfeed watch --selector 0x095ea7b3
+# one contract — this one is the chain's busiest router, so it shows something
+uv run rhfeed watch --to 0xcaf681a66d020601342297493863e78c959e5cb2
+# one wallet, which costs a signature recovery per transaction. This one was an
+# active bot when we wrote this; wallets go quiet, contracts mostly don't
+uv run rhfeed watch --sender 0x830d44e14a9388e5b1880902b8370b951b622b9c
 uv run rhfeed watch --min-value 1000000000000000000   # ≥ 1 ETH
 uv run rhfeed watch --sender-column           # show who sent each tx
 uv run rhfeed watch --json                    # machine-readable, full addresses
@@ -80,7 +84,19 @@ Skipping the relay for a one-off look is `--feed mainnet` (or `testnet`, or any
 Nitro relay URL), which works on either side of the subcommand. Fine for a look,
 not for anything that runs — that's what the rate limit above is about.
 
+Done looking? `docker compose down` stops the relay — it is set to restart with
+Docker otherwise.
+
 ## Use it from Python
+
+In your own project, not this checkout:
+
+```bash
+uv add git+https://github.com/chainstacklabs/robinhood-chain-sequencer-feed
+```
+
+It still expects a relay on `ws://127.0.0.1:9642`; copy
+[`docker-compose.yml`](docker-compose.yml) or pass a URL to `FeedConsumer(...)`.
 
 ```python
 import asyncio
@@ -105,7 +121,7 @@ Worked examples:
 | | |
 |---|---|
 | [`token_flow.py`](examples/token_flow.py) | watch specific tokens — the cheap-filter pattern, start here. Its default (NVDA) is a thin market, so expect long gaps between matches; it prints a scan line every 15s so you can tell idle from broken |
-| [`copy_trade_signals.py`](examples/copy_trade_signals.py) | follow wallets, emit JSON signals |
+| [`copy_trade_signals.py`](examples/copy_trade_signals.py) | follow wallets, emit JSON signals — takes the addresses to follow as arguments |
 | [`replay_capture.py`](examples/replay_capture.py) | run the same code offline against a recording |
 | [`bench.py`](examples/bench.py) | reproduce the numbers in the next section on your hardware |
 
