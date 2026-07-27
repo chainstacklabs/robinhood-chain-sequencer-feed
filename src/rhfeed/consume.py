@@ -26,17 +26,27 @@ seen number is always in range, and costs exactly one duplicate, which is droppe
 
 **Sender recovery on the hot path.** Never done here. `tx.sender` is lazy — ask for
 it on the handful of transactions that survive your filter, not on all of them.
+
+**Silence.** A relay that is not running, a relay whose own upstream connection is
+down, a relay still replaying its backlog, and a chain that happens to be quiet all
+look identical from here: no messages. So this module says which one it is, through
+`logging` — warnings for a connection that will not open and for one that has gone
+quiet, info for connecting, draining and going live. Warnings reach stderr with no
+setup; `logging.getLogger("rhfeed").setLevel(...)` mutes or unmutes the rest.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections.abc import AsyncIterator
 
 import websockets
 
 from .codec import FeedMessage, parse_frame
+
+_log = logging.getLogger(__name__)
 
 try:  # 2-3x faster than the stdlib on frames this size; optional
     from orjson import loads as _loads
@@ -66,12 +76,17 @@ class FeedConsumer:
         max_backlog_seconds: float = 120.0,
         reconnect_delay: float = 0.5,
         max_reconnect_delay: float = 30.0,
+        stall_warning: float = 30.0,
     ) -> None:
         self.url = url
         self.live_threshold = live_threshold
         self.max_backlog_seconds = max_backlog_seconds
         self.reconnect_delay = reconnect_delay
         self.max_reconnect_delay = max_reconnect_delay
+        #: Warn after this long with an open connection and no frames. The chain
+        #: produces several blocks a second, so silence this long is a fault
+        #: somewhere, usually the relay's own upstream. 0 disables the check.
+        self.stall_warning = stall_warning
 
         self.stats = {
             "frames": 0,
@@ -82,6 +97,7 @@ class FeedConsumer:
         }
         self._live = False
         self._highest_seq = -1
+        self._last_frame_at = 0.0
 
     @property
     def is_live(self) -> bool:
@@ -110,7 +126,54 @@ class FeedConsumer:
             # Fallback for a skewed clock: the backlog is finite, so stop waiting.
             or (now - started) > self.max_backlog_seconds
         )
+        if self._live:
+            _log.info(
+                "live — %d backlog messages skipped, at seq %d",
+                self.stats["backlog_messages"],
+                self._highest_seq,
+            )
         return self._live
+
+    async def _monitor(self) -> None:
+        """Narrate an open connection that has not started producing yet.
+
+        Two silences look identical from outside and mean different things. A relay
+        whose own upstream is down holds the socket open and never sends anything —
+        that is a fault, and it warns. A relay still replaying its backlog is sending
+        plenty, none of it live yet — that is normal, and it just reports progress.
+        """
+        # Poll well inside the threshold, or a stall that starts just after a tick
+        # goes unreported for twice as long as advertised.
+        interval = max(self.stall_warning / 4, 0.1)
+        warned = False
+        while True:
+            await asyncio.sleep(interval)
+            if not self._last_frame_at:
+                # No connection to be stalled on; the reconnect loop is already saying so.
+                warned = False
+                continue
+
+            idle = time.monotonic() - self._last_frame_at
+            if idle >= self.stall_warning:
+                if not warned:
+                    warned = True  # once per stall, not once per poll
+                    _log.warning(
+                        "no frames from %s for %.0fs — connected, but nothing is arriving. "
+                        "Usually the relay's own upstream is down "
+                        "(check: docker compose logs relay)",
+                        self.url,
+                        idle,
+                    )
+                continue
+
+            warned = False
+            if not self._live:
+                # Frames are flowing but none are current yet. Common on a relay that
+                # has just started, because it is replaying its own upstream backlog.
+                _log.info(
+                    "draining backlog — %d messages so far, none current yet",
+                    self.stats["backlog_messages"],
+                )
 
     async def messages(self, decode_backlog: bool = True) -> AsyncIterator[FeedMessage]:
         """Yield every message, backlog first, reconnecting until cancelled.
@@ -120,26 +183,55 @@ class FeedConsumer:
         its sequence number, but no transaction is decoded.
         """
         delay = self.reconnect_delay
-        while True:
-            try:
-                async with websockets.connect(
-                    self.url, additional_headers=self._headers(), max_size=2**24
-                ) as ws:
-                    delay = self.reconnect_delay
-                    started = time.time()
-                    self._live = False
-                    async for raw in ws:
-                        self.stats["frames"] += 1
-                        received = time.time()
-                        for msg in self._frame(_loads(raw), started, decode_backlog):
-                            msg.received_at = received
-                            yield msg
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                self.stats["reconnects"] += 1
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, self.max_reconnect_delay)
+        failures = 0
+        monitor = asyncio.create_task(self._monitor()) if self.stall_warning else None
+        try:
+            while True:
+                try:
+                    _log.info("connecting to %s", self.url)
+                    async with websockets.connect(
+                        self.url, additional_headers=self._headers(), max_size=2**24
+                    ) as ws:
+                        if failures:
+                            _log.warning("%s is reachable again", self.url)
+                        failures = 0
+                        delay = self.reconnect_delay
+                        started = time.time()
+                        self._live = False
+                        self._last_frame_at = time.monotonic()
+                        async for raw in ws:
+                            self.stats["frames"] += 1
+                            received = time.time()
+                            self._last_frame_at = time.monotonic()
+                            for msg in self._frame(_loads(raw), started, decode_backlog):
+                                msg.received_at = received
+                                yield msg
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    failures += 1
+                    self.stats["reconnects"] += 1
+                    # Never fail silently here. A relay that was never started is the
+                    # single most common way to end up staring at an empty terminal,
+                    # and the retry loop would otherwise hide it forever.
+                    _log.warning(
+                        "cannot read %s (%s: %s) — retrying in %.1fs%s",
+                        self.url,
+                        type(exc).__name__,
+                        exc,
+                        delay,
+                        "; is the relay running? (docker compose up -d relay)"
+                        if failures == 1
+                        else "",
+                    )
+                    self._last_frame_at = 0.0
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, self.max_reconnect_delay)
+        finally:
+            if monitor is not None:
+                # Cancel without awaiting: this runs during aclose(), which may itself
+                # be unwinding a cancellation.
+                monitor.cancel()
 
     def _frame(self, frame: dict, started: float, decode_backlog: bool):
         # Decide liveness from the frame's own timestamps before deciding whether the

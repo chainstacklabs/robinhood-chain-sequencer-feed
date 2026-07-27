@@ -72,16 +72,29 @@ def selector_of(signature: str) -> bytes:
     return keccak(signature.encode())[:4]
 
 
+def _unhex(value: str, what: str) -> bytes:
+    # bytes.fromhex raises before any length check, and its message ("non-hexadecimal
+    # number found in fromhex() arg at position 8") says nothing useful to someone who
+    # pasted a shortened address off the terminal. Say what was wrong with what.
+    try:
+        return bytes.fromhex(value.removeprefix("0x"))
+    except ValueError as exc:
+        raise ValueError(f"not a hex {what}: {value!r}") from exc
+
+
 def sel(hex_selector: str) -> bytes:
     """4-byte selector from its hex form, with or without the 0x."""
-    return bytes.fromhex(hex_selector.removeprefix("0x"))
+    raw = _unhex(hex_selector, "selector")
+    if len(raw) != 4:
+        raise ValueError(f"not a 4-byte selector: {hex_selector!r} is {len(raw)} bytes")
+    return raw
 
 
 def addr(hex_address: str) -> bytes:
     """20 raw bytes from a hex address, for membership tests against `to_bytes`."""
-    raw = bytes.fromhex(hex_address.removeprefix("0x"))
+    raw = _unhex(hex_address, "address")
     if len(raw) != 20:
-        raise ValueError(f"not a 20-byte address: {hex_address}")
+        raise ValueError(f"not a 20-byte address: {hex_address!r} is {len(raw)} bytes")
     return raw
 
 

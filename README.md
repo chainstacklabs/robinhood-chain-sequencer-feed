@@ -32,15 +32,24 @@ the part underneath it: get the data, decode it fast, hand it over.
 
 ## Try it
 
-You need Docker and Python 3.11+.
+You need Docker and [uv](https://docs.astral.sh/uv/getting-started/installation/),
+which fetches its own Python 3.11+.
 
 ```bash
-docker compose up -d relay    # give it ~20s to connect
+docker compose up -d --wait relay   # --wait blocks until the relay is serving
 uv sync
-uv run rhfeed watch           # Ctrl-C to stop
+uv run rhfeed watch                 # Ctrl-C to stop
 ```
 
-That's it. Columns are `hash · kind · to · selector`, grouped by block.
+That's it. Columns are `hash · kind · to · selector`, grouped by block. Addresses are
+shortened to keep the line readable; `--json` gives the full ones, which is what you
+want if you are about to filter on them.
+
+**Nothing showing up?** `rhfeed` tells you which kind of nothing it is, on stderr: it
+says when it connects, when the backlog drains, when it can't reach the relay, and
+when it's connected but no frames are arriving. That last one means the relay's own
+upstream is down — `docker compose logs relay` prints `Feed connected` when that link
+is healthy and retries `failed connect to sequencer broadcast` when it isn't.
 
 **Why the Docker step?** That's Offchain Labs' official relay — one connection to
 Robinhood's feed, re-served to as many local consumers as you like. You want it
@@ -56,7 +65,8 @@ uv run rhfeed watch --to 0xcaf681a6...        # one contract
 uv run rhfeed watch --sender 0xabc...         # one wallet
 uv run rhfeed watch --min-value 1000000000000000000   # ≥ 1 ETH
 uv run rhfeed watch --sender-column           # show who sent each tx
-uv run rhfeed watch --json                    # machine-readable
+uv run rhfeed watch --json                    # machine-readable, full addresses
+uv run rhfeed watch --seconds 30              # stop on a timer, not on Ctrl-C
 ```
 
 Not sure what to filter on? Record a minute and see what's actually busy:
@@ -65,6 +75,10 @@ Not sure what to filter on? Record a minute and see what's actually busy:
 uv run rhfeed capture --seconds 60 session.jsonl
 uv run python examples/replay_capture.py session.jsonl
 ```
+
+Skipping the relay for a one-off look is `--feed mainnet` (or `testnet`, or any
+Nitro relay URL), which works on either side of the subcommand. Fine for a look,
+not for anything that runs — that's what the rate limit above is about.
 
 ## Use it from Python
 
@@ -86,13 +100,14 @@ async def main():
 asyncio.run(main())
 ```
 
-Three worked examples:
+Worked examples:
 
 | | |
 |---|---|
-| [`token_flow.py`](examples/token_flow.py) | watch specific tokens — the cheap-filter pattern, start here |
+| [`token_flow.py`](examples/token_flow.py) | watch specific tokens — the cheap-filter pattern, start here. Its default (NVDA) is a thin market, so expect long gaps between matches; it prints a scan line every 15s so you can tell idle from broken |
 | [`copy_trade_signals.py`](examples/copy_trade_signals.py) | follow wallets, emit JSON signals |
 | [`replay_capture.py`](examples/replay_capture.py) | run the same code offline against a recording |
+| [`bench.py`](examples/bench.py) | reproduce the numbers in the next section on your hardware |
 
 ## Read this before you trade on it
 
@@ -126,6 +141,10 @@ want:
 The last three are computed only when you read them, then cached. So if you filter
 on the cheap fields, a transaction you discard costs ~4 µs instead of ~70.
 
+Don't take the table's word for it — `uv run python examples/bench.py` prints these
+four rows for your machine, and `--reference` adds the libraries the fast paths
+replace.
+
 Headroom is generous either way: the chain does ~71 transactions a second, and one
 core fully decodes ~14,000.
 
@@ -144,6 +163,7 @@ on transactions of every type and on 143 real ones captured from mainnet:
 
 ```bash
 uv run --extra dev pytest
+uv run --extra dev python examples/bench.py --reference   # the same comparison, timed
 ```
 
 ## Endpoints

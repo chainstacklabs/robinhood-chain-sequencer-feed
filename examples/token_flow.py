@@ -16,9 +16,14 @@ Sender is read only for the handful that match, which is exactly the point of
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import Counter
 
 from rhfeed import FeedConsumer, addr, selector_of
+
+#: Print a scan line this often even when nothing matched, so an idle run is visibly
+#: idle rather than indistinguishable from a broken one.
+HEARTBEAT_SECONDS = 15.0
 
 # Stock tokens are beacon proxies of one Stock implementation, so they share a
 # selector set. Swap in whichever contracts you care about.
@@ -41,9 +46,14 @@ TRANSFERS = {
 async def main() -> None:
     consumer = FeedConsumer()
     counts: Counter[str] = Counter()
+    scanned = 0
+    next_beat = time.monotonic() + HEARTBEAT_SECONDS
+
+    print(f"watching {', '.join(TOKENS.values())} for transfers — quiet is normal", flush=True)
 
     async for msg in consumer.live():
         for tx in msg.txs:
+            scanned += 1
             name = TOKENS.get(tx.to_bytes)
             if name is None or tx.selector not in TRANSFERS:
                 continue
@@ -51,8 +61,15 @@ async def main() -> None:
             # Only now is anything expensive computed.
             print(f"block {msg.seq}  {name:<6} {tx.hash}  from {tx.sender}", flush=True)
 
-        if msg.seq % 500 == 0 and counts:
-            print(f"# {dict(counts)}  ({consumer.stats['live_messages']} blocks)", flush=True)
+        # Unconditional, not gated on having matched something: a run with no matches
+        # is the expected case here, and it still needs to look alive.
+        if time.monotonic() >= next_beat:
+            next_beat = time.monotonic() + HEARTBEAT_SECONDS
+            print(
+                f"# {consumer.stats['live_messages']} blocks, {scanned} tx scanned, "
+                f"{sum(counts.values())} matched {dict(counts) or ''}".rstrip(),
+                flush=True,
+            )
 
 
 if __name__ == "__main__":

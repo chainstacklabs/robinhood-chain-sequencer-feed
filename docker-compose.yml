@@ -1,7 +1,11 @@
 # Offchain Labs' own relay binary, pointed at Robinhood Chain.
 #
-#   docker compose up -d relay
+#   docker compose up -d --wait relay     # blocks until the relay is serving
 #   rhfeed watch
+#
+# If it never becomes healthy, or it is healthy and `rhfeed watch` still shows
+# nothing, the answer is in `docker compose logs relay` — "Feed connected" means the
+# upstream is good, repeated "failed connect to sequencer broadcast" means it is not.
 #
 # `entrypoint: relay` selects a different binary from the nitro-node image: it holds
 # one upstream WebSocket and re-serves it, with no sync, no execution and no
@@ -27,3 +31,16 @@ services:
       - --chain.id=4663
     # The relay holds everything in memory and needs very little of it.
     mem_limit: 512m
+    # The broadcaster answers a plain GET with "400 handshake error: bad Upgrade
+    # header", which is enough to prove it is listening and serving. curl without -f
+    # treats a 400 as success, which is what we want here.
+    #
+    # This says the local server is up. It does *not* say the upstream feed is
+    # connected — nothing the relay exposes does. `rhfeed watch` warns about that
+    # case itself after 30 quiet seconds.
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "--max-time", "3", "http://127.0.0.1:9642/"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
