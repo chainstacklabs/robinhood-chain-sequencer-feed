@@ -60,7 +60,7 @@ memory and ~1.6% of a core, nothing written to disk. It is *not* a full node.
 
 ## Filter it
 
-There is one command and five flags.
+There is one command and seven flags.
 
 ```bash
 # ERC-20 approvals only
@@ -73,9 +73,17 @@ uv run rhfeed --sender 0x830d44e14a9388e5b1880902b8370b951b622b9c
 uv run rhfeed --json            # machine-readable, and the only place full addresses appear
 uv run rhfeed --seconds 30      # stop on a timer instead of Ctrl-C
 uv run rhfeed --feed mainnet    # skip the relay, straight at the public endpoint
+uv run rhfeed --verify          # drop anything not signed by the sequencer key
 ```
 
 `--to`, `--selector` and `--sender` can each be repeated, and they combine.
+
+`--verify` checks the signature every message carries and drops the ones that fail,
+reporting the count in the summary line even when it is zero. Worth turning on
+whenever the feed is one you don't control — a public endpoint, someone else's relay,
+a capture handed to you. It costs one signature recovery per message and is off by
+default, because the default URL is a relay you run that verified its own upstream
+already. See [Verify it](#verify-it).
 
 Not sure what to filter on? `uv run python examples/replay_capture.py` decodes the
 frames bundled for the tests and ranks the contracts, selectors and wallets in them.
@@ -122,6 +130,41 @@ Worked examples:
 | [`copy_trade_signals.py`](examples/copy_trade_signals.py) | follow wallets, emit JSON signals — takes the addresses to follow as arguments |
 | [`replay_capture.py`](examples/replay_capture.py) | run the same decoder offline against saved frames — no relay, no network. Ranks contracts, selectors and wallets, and times the sender recoveries so the cost is visible |
 | [`bench.py`](examples/bench.py) | reproduce the numbers in the next section on your hardware |
+
+## Verify it
+
+Every message on Robinhood's mainnet feed carries a 65-byte ECDSA signature. Checking
+it takes one line:
+
+```python
+from rhfeed import MAINNET_FEED, MAINNET_VERIFIER, FeedConsumer
+
+async for msg in FeedConsumer(MAINNET_FEED, verify=MAINNET_VERIFIER).live():
+    ...  # anything reaching here carried a good signature
+```
+
+The signer is `0xDaa526086787d9DEbE1D7F3FFdb1fE50cf8687F4`, which `isBatchPoster()` on
+the L1 `SequencerInbox` returns true for — the same key signs the feed and posts
+batches to Ethereum. So the identity is anchored in Ethereum state rather than in a
+value Robinhood could quietly change, and this is the same check a stock Nitro node
+makes by default.
+
+Worth being clear about what it buys you, since the transport is already `wss`. TLS
+tells you that you reached whatever sits in front of the endpoint. The signature tells
+you the message was produced by the sequencer's key — a claim that survives a
+compromised CDN edge, a proxy of your own, a relay you don't operate, and a capture
+off disk. It says nothing about whether the transaction will succeed; see the next
+section for that.
+
+A message that fails verification is dropped without advancing the sequence watermark,
+so injecting one frame can't make a reconnect skip the real messages behind it. If
+*everything* is being dropped, suspect the verifier's chain id or signer set before
+suspecting the feed — the first rejection logs both, and the count lands in
+`consumer.stats["unverified_messages"]`.
+
+For lower-level use, [`verify.py`](src/rhfeed/verify.py) exposes `signature_payload`,
+`signature_hash`, `recover_signer` and `Verifier`. Read its docstring before porting
+the preimage anywhere: two of the field encodings are not what the JSON suggests.
 
 ## Read this before you trade on it
 
@@ -237,7 +280,8 @@ to Ethereum, so the chain of trust terminates in L1 state rather than in Robinho
 word for it. That is exactly what a stock Nitro client checks — recover, then
 `IsBatchPosterOrSequencer` against the SequencerInbox, enabled by default via
 `--feed.input.verify.accept-sequencer`. A forged message from anything on the path is
-therefore detectable, not merely unlikely. (Sanity check when porting this: recompute
+therefore detectable, not merely unlikely — [Verify it](#verify-it) is how you make
+this package do the detecting. (Sanity check when porting this: recompute
 with the wrong `chainId` and the recovered addresses should scatter across messages.
 If they stay consistent, your preimage isn't binding what you think it is.)
 

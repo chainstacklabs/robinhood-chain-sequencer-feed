@@ -25,6 +25,7 @@ import sys
 
 from .codec import Tx, addr, sel
 from .consume import DEFAULT_RELAY, MAINNET_FEED, TESTNET_FEED, FeedConsumer
+from .verify import MAINNET_VERIFIER
 
 FEEDS = {"mainnet": MAINNET_FEED, "testnet": TESTNET_FEED, "relay": DEFAULT_RELAY}
 
@@ -80,7 +81,9 @@ class Filter:
 
 
 async def watch(args: argparse.Namespace) -> None:
-    consumer = FeedConsumer(resolve_feed(args.feed))
+    consumer = FeedConsumer(
+        resolve_feed(args.feed), verify=MAINNET_VERIFIER if args.verify else None
+    )
     try:
         keep = Filter(args)
     except ValueError as exc:
@@ -138,9 +141,13 @@ async def watch(args: argparse.Namespace) -> None:
 
     s = consumer.stats
     counted = "matched" if keep.active else "seen"
+    # Report the verification result even when it is zero. "0 unverified" is the whole
+    # point of having asked; leaving it out reads the same as not having checked.
+    checked = f", {s['unverified_messages']} unverified dropped" if args.verify else ""
     print(
         f"# {shown} transactions {counted} | {s['live_messages']} live messages, "
-        f"{s['backlog_messages']} backlog skipped, {s['reconnects']} failed connections",
+        f"{s['backlog_messages']} backlog skipped{checked}, "
+        f"{s['reconnects']} failed connections",
         file=sys.stderr,
     )
 
@@ -161,6 +168,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--seconds", type=float, help="stop after this long, whether or not anything arrives"
     )
     ap.add_argument("--json", action="store_true", help="one JSON object per message")
+    ap.add_argument(
+        "--verify",
+        action="store_true",
+        help="drop messages not signed by Robinhood Chain's sequencer key. Worth it on "
+        "a feed you do not control; costs one signature recovery per message",
+    )
     ap.add_argument("--to", action="append", help="only transactions to this address")
     ap.add_argument("--selector", action="append", help="only calls with this 4-byte selector")
     ap.add_argument(

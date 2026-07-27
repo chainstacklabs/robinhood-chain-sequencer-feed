@@ -5,8 +5,8 @@
             ...
 
 This is deliberately thin — the relay does the work of holding the upstream
-connection, and `codec` does the work of decoding. What is left is the three things
-a bare `websockets.connect` loop still gets wrong against a relay.
+connection, and `codec` does the work of decoding. What is left is the handful of
+things a bare `websockets.connect` loop still gets wrong against a relay.
 
 **Backlog.** Every new client is replayed the relay's backlog before live messages
 start, and requesting a sequence number is the only way to skip it. Measured
@@ -27,6 +27,14 @@ seen number is always in range, and costs exactly one duplicate, which is droppe
 **Sender recovery on the hot path.** Never done here. `tx.sender` is lazy — ask for
 it on the handful of transactions that survive your filter, not on all of them.
 
+**Signatures.** Off by default, because the default URL is a relay you run and it
+verified its own upstream. Pass `verify=MAINNET_VERIFIER` when the feed is one you do
+not control — a public endpoint, someone else's relay, a capture off disk — and
+messages that do not carry a good signature from the chain's sequencer key are
+dropped before you see them. A rejected message does not advance the sequence
+watermark, so injecting one cannot make a reconnect skip the real ones behind it. See
+`verify.py` for what the signature covers and what it is worth.
+
 **Silence.** A relay that is not running, a relay whose own upstream connection is
 down, a relay still replaying its backlog, and a chain that happens to be quiet all
 look identical from here: no messages. So this module says which one it is, through
@@ -45,6 +53,7 @@ from collections.abc import AsyncIterator
 import websockets
 
 from .codec import FeedMessage, parse_frame
+from .verify import Verifier
 
 _log = logging.getLogger(__name__)
 
@@ -72,6 +81,7 @@ class FeedConsumer:
         self,
         url: str = DEFAULT_RELAY,
         *,
+        verify: Verifier | None = None,
         live_threshold: float = 5.0,
         max_backlog_seconds: float = 120.0,
         reconnect_delay: float = 0.5,
@@ -79,6 +89,11 @@ class FeedConsumer:
         stall_warning: float = 30.0,
     ) -> None:
         self.url = url
+        #: Drop messages that do not carry a good signature from an allowed signer.
+        #: Off by default: it costs an ECDSA recovery per message, and the default URL
+        #: is a relay you run, which verified its own upstream already. Pass
+        #: `MAINNET_VERIFIER` when reading a feed you do not control.
+        self.verify = verify
         self.live_threshold = live_threshold
         self.max_backlog_seconds = max_backlog_seconds
         self.reconnect_delay = reconnect_delay
@@ -93,11 +108,13 @@ class FeedConsumer:
             "backlog_messages": 0,
             "live_messages": 0,
             "duplicate_messages": 0,
+            "unverified_messages": 0,
             "reconnects": 0,
         }
         self._live = False
         self._highest_seq = -1
         self._last_frame_at = 0.0
+        self._warned_unverified = False
 
     @property
     def is_live(self) -> bool:
@@ -244,14 +261,45 @@ class FeedConsumer:
             "timestamp", 0
         )
         live = self._judge_live(stamp, started)
-        for msg in parse_frame(frame, decode_txs=live or decode_backlog):
+        messages = parse_frame(frame, decode_txs=live or decode_backlog)
+        # parse_frame returns one message per entry, in order. strict=True turns any
+        # future drift in that contract into an error rather than a signature checked
+        # against the wrong message.
+        for entry, msg in zip(entries, messages, strict=True):
             if msg.seq <= self._highest_seq:
                 self.stats["duplicate_messages"] += 1
+                continue
+            if self.verify is not None and not self.verify.accepts(entry):
+                self._reject(entry, msg.seq)
                 continue
             self._highest_seq = msg.seq
             msg.live = live
             self.stats["live_messages" if live else "backlog_messages"] += 1
             yield msg
+
+    def _reject(self, entry: dict, seq: int) -> None:
+        """Drop a message that failed verification, without advancing the watermark.
+
+        Not advancing matters: the watermark is what a reconnect re-requests from, so
+        honouring a rejected sequence number would let anything that can inject one
+        frame make us skip the real messages behind it.
+        """
+        self.stats["unverified_messages"] += 1
+        if self._warned_unverified:
+            return
+        # Once, then counted. A wrong chain id or a stale signer set rejects *every*
+        # message, and a warning per message would bury the reason it started.
+        self._warned_unverified = True
+        signer = self.verify.signer_of(entry)
+        _log.warning(
+            "dropping unverified message at seq %d: %s, expected one of %s. "
+            "Further ones are counted in stats['unverified_messages'] but not logged. "
+            "Check the verifier's chain id (%d) and signer set before suspecting the feed",
+            seq,
+            "signed by 0x" + signer.hex() if signer else "no usable signature",
+            ", ".join(sorted("0x" + s.hex() for s in self.verify.signers)),
+            self.verify.chain_id,
+        )
 
     async def live(self) -> AsyncIterator[FeedMessage]:
         """Only messages from after the backlog drained, and only those decoded."""

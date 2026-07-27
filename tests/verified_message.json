@@ -1,0 +1,20 @@
+{
+  "blockHash": "0x665fa5e651d0c66da7978cf5a07b751c71589472fa7b13508a36f9edf9ef3911",
+  "blockMetadata": null,
+  "message": {
+    "delayedMessagesRead": 68519,
+    "message": {
+      "header": {
+        "baseFeeL1": 0,
+        "blockNumber": 25625061,
+        "kind": 3,
+        "requestId": null,
+        "sender": "0xa4b000000000000000000073657175656e636572",
+        "timestamp": 1785166353
+      },
+      "l2Msg": "AwAAAAAAAABwBPhtggqNhApLnsCCXxiUenZHY9E9F+Pp2tpbA3GygN7xBGqGASjsTTkfgIIkkqAMPhc21kyIBZR0RowXW6Ho9E3rGhTjQiS+EryRYl6gdKBPl78LaXMB2YwV8xUBdkB3ZDFbl6+EXT7JVGb/h+M/cwAAAAAAAAD4BAL49IISN4IOOIRZaC8AhF2t7wCDCSfAlHOZGiXIGL8fESjeqrFJLUVjjeDTgLiE/G94ZQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABmgYAAAAAAAAAAAAAAAAdLJuwnVNy9J+Q6KlJ+OABTWKdy4AAAAAAAAAAAAAAAAAAAAA/////////////////////wAAAAAAAAAAAAAAAAAAAAD/////////////////////wICg2/lv1vQh9OylhGUpTdmx+6hbxyeZcwn5b4PRxKzH6yKgIYXJkdpJTLtQ8tGJwln97FiADyZ56U5WVfyBTyvAn3A="
+    }
+  },
+  "sequenceNumber": 20842309,
+  "signatureV2": "/ZnWFeNtaNHG8KCm2ucy2RayWXjwOYWnr+5f0pfesf02BHcSHZxOm7XIZC7rRdE30XneirTSNVhVxgYS3/CAlQA="
+}

@@ -1,6 +1,6 @@
 [project]
 name = "rhfeed"
-version = "0.2.0"
+version = "0.3.0"
 description = "Decode an Arbitrum Orbit sequencer feed, fast enough to act on it"
 readme = "README.md"
 requires-python = ">=3.11"
