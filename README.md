@@ -112,34 +112,35 @@ decided. You're reading, not racing.
 
 ## Speed
 
-Your head start over an RPC node is single-digit milliseconds, so decoding has to be
-cheap. The decoder is built around that: filter on the fields that are free, and
-never compute the expensive ones for a transaction you are going to discard.
+A transaction arrives as raw bytes. Turning it into something usable — who sent it,
+what it calls, how much — costs very different amounts depending on which fields you
+want:
 
-`to_bytes` and `selector` are raw bytes, sliced straight out of the envelope.
-`hash`, `to` and `sender` are computed on first access, then cached.
+| What you read | Per transaction | Why |
+|---|---|---|
+| `to_bytes`, `selector`, `value`, `nonce`, `gas` | ~4 µs | already sitting in the bytes |
+| `+ hash` | ~10 µs | has to hash the whole transaction |
+| `+ to` (checksummed) | ~18 µs | another hash |
+| `+ sender` | ~70 µs | the address isn't in the transaction — it has to be recovered from the signature |
 
-| What you touch | Per transaction |
-|---|---|
-| `to_bytes`, `selector`, `value`, `nonce`, `gas` | ~4 µs |
-| `+ hash` | ~10 µs |
-| `+ to` (checksummed) | ~18 µs |
-| `+ sender` (ECDSA recovery) | ~70 µs |
+The last three are computed only when you read them, then cached. So if you filter
+on the cheap fields, a transaction you discard costs ~4 µs instead of ~70.
 
-A transaction you filter out therefore costs about 5% of a full decode. For scale:
-the chain runs ~14.5 blocks/s and ~71 tx/s, and one core handles roughly 14,000
-fully decoded transactions a second — decoding everything is ~0.5% of a core.
+Headroom is generous either way: the chain does ~71 transactions a second, and one
+core fully decodes ~14,000.
 
-Two things account for most of that. RLP is walked by an offset scanner that copies
-nothing, instead of building an object tree per transaction: ~2x faster than `rlp`.
-Sender recovery reconstructs the signing payload from offsets already scanned and
-calls coincurve directly, instead of handing the envelope to a library that decodes
-it a second time: ~5.3x faster than `eth_account`, 44 µs against 233 µs.
+Two parts are written by hand rather than taken from the usual libraries:
 
-Hand-rolling RLP, EIP-55 checksumming and signature recovery is only worth doing if
-they are exactly right, so `tests/` compares each against `rlp`, `eth_utils` and
-`eth_account` — on synthetic envelopes of every type, and on 143 real mainnet
-transactions:
+- **Reading fields.** The decoder notes where each field starts and ends and slices
+  out only what you ask for, instead of unpacking all of them into objects. About
+  twice as fast as `rlp`.
+- **Recovering the sender.** `eth_account` re-reads the whole transaction before it
+  starts the cryptography. This skips that and goes straight to coincurve: 44 µs
+  instead of 233 µs.
+
+Either would fail quietly if it were subtly wrong — you would get addresses that
+look fine and aren't — so `tests/` checks both against the libraries they replace,
+on transactions of every type and on 143 real ones captured from mainnet:
 
 ```bash
 uv run --extra dev pytest
