@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.env
+.ruff_cache/
+.pytest_cache/
+
+# Captures are large and disposable — except the one the tests decode against.
+*.jsonl
+!tests/frames.jsonl

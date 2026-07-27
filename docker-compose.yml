@@ -1,0 +1,46 @@
+# Offchain Labs' own relay binary, pointed at Robinhood Chain.
+#
+#   docker compose up -d --wait relay     # blocks until the relay is serving
+#   rhfeed
+#
+# If it never becomes healthy, or it is healthy and `rhfeed` still shows
+# nothing, the answer is in `docker compose logs relay` — "Feed connected" means the
+# upstream is good, repeated "failed connect to sequencer broadcast" means it is not.
+#
+# `entrypoint: relay` selects a different binary from the nitro-node image: it holds
+# one upstream WebSocket and re-serves it, with no sync, no execution and no
+# database. Measured against this chain it sits at ~23 MB of memory and ~1.5% of a
+# core, and writes nothing to disk.
+#
+# Consumers — including full Nitro nodes via --node.feed.input.url — connect to
+# ws://<host>:9642 and share this one upstream connection. That matters because the
+# public feed rate-limits per client, not per connection.
+
+services:
+  relay:
+    image: offchainlabs/nitro-node:v3.11.2-3599aca
+    entrypoint: relay
+    restart: unless-stopped
+    ports:
+      # Bound to localhost. Publish it wider only behind your own network controls —
+      # the relay has no authentication of its own.
+      - "127.0.0.1:9642:9642"
+    command:
+      - --node.feed.output.addr=0.0.0.0
+      - --node.feed.input.url=wss://feed.mainnet.chain.robinhood.com
+      - --chain.id=4663
+    # The relay holds everything in memory and needs very little of it.
+    mem_limit: 512m
+    # The broadcaster answers a plain GET with "400 handshake error: bad Upgrade
+    # header", which is enough to prove it is listening and serving. curl without -f
+    # treats a 400 as success, which is what we want here.
+    #
+    # This says the local server is up. It does *not* say the upstream feed is
+    # connected — nothing the relay exposes does. `rhfeed` warns about that
+    # case itself after 30 quiet seconds.
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "--max-time", "3", "http://127.0.0.1:9642/"]
+      interval: 5s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
