@@ -66,8 +66,8 @@ There is one command and five flags.
 uv run rhfeed --selector 0x095ea7b3
 # one contract — this one is the chain's busiest router, so it shows something
 uv run rhfeed --to 0xcaf681a66d020601342297493863e78c959e5cb2
-# one wallet. Also prints who sent each transaction, which is the one expensive
-# field — see Speed. This was an active bot when we wrote it; wallets go quiet
+# one wallet — for an address you already care about, since it also prints who
+# sent each transaction, and that is the one expensive field. See Speed
 uv run rhfeed --sender 0x830d44e14a9388e5b1880902b8370b951b622b9c
 uv run rhfeed --json            # machine-readable, and the only place full addresses appear
 uv run rhfeed --seconds 30      # stop on a timer instead of Ctrl-C
@@ -77,8 +77,9 @@ uv run rhfeed --feed mainnet    # skip the relay, straight at the public endpoin
 `--to`, `--selector` and `--sender` can each be repeated, and they combine.
 
 Not sure what to filter on? `uv run python examples/replay_capture.py` decodes the
-frames bundled for the tests and prints the busiest contracts and selectors. No
-relay needed — it reads from disk.
+frames bundled for the tests and ranks the contracts, selectors and wallets in them.
+No relay needed — it reads from disk. A contract stays busy; a wallet may not, so
+check before you take one from there or from the example above.
 
 Done looking? `docker compose down` stops the relay — it is set to restart with
 Docker otherwise.
@@ -118,7 +119,7 @@ Worked examples:
 |---|---|
 | [`token_flow.py`](examples/token_flow.py) | watch specific tokens — the cheap-filter pattern, start here. Its default (NVDA) is a thin market, so expect long gaps between matches; it prints a scan line every 15s so you can tell idle from broken |
 | [`copy_trade_signals.py`](examples/copy_trade_signals.py) | follow wallets, emit JSON signals — takes the addresses to follow as arguments |
-| [`replay_capture.py`](examples/replay_capture.py) | run the same decoder offline against saved frames — no relay, no network |
+| [`replay_capture.py`](examples/replay_capture.py) | run the same decoder offline against saved frames — no relay, no network. Ranks contracts, selectors and wallets, and times the sender recoveries so the cost is visible |
 | [`bench.py`](examples/bench.py) | reproduce the numbers in the next section on your hardware |
 
 ## Read this before you trade on it
