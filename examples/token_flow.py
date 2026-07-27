@@ -31,8 +31,7 @@ HEARTBEAT_SECONDS = 15.0
 # Expect long silences on this default. The tokenised float is small — NVDA's whole
 # on-chain supply is a few thousand tokens — while the chain's actual traffic is ETH
 # and Uniswap. If you want to watch something busy while testing, point TOKENS at a
-# router instead: `rhfeed capture` a minute of frames and run
-# `examples/replay_capture.py` on it to see which contracts are actually moving.
+# router instead: `examples/replay_capture.py` prints which contracts are moving.
 TOKENS = {
     addr("0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec"): "NVDA",
 }

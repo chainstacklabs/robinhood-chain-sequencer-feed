@@ -1,9 +1,9 @@
 # Offchain Labs' own relay binary, pointed at Robinhood Chain.
 #
 #   docker compose up -d --wait relay     # blocks until the relay is serving
-#   rhfeed watch
+#   rhfeed
 #
-# If it never becomes healthy, or it is healthy and `rhfeed watch` still shows
+# If it never becomes healthy, or it is healthy and `rhfeed` still shows
 # nothing, the answer is in `docker compose logs relay` — "Feed connected" means the
 # upstream is good, repeated "failed connect to sequencer broadcast" means it is not.
 #
@@ -36,7 +36,7 @@ services:
     # treats a 400 as success, which is what we want here.
     #
     # This says the local server is up. It does *not* say the upstream feed is
-    # connected — nothing the relay exposes does. `rhfeed watch` warns about that
+    # connected — nothing the relay exposes does. `rhfeed` warns about that
     # case itself after 30 quiet seconds.
     healthcheck:
       test: ["CMD", "curl", "-s", "-o", "/dev/null", "--max-time", "3", "http://127.0.0.1:9642/"]

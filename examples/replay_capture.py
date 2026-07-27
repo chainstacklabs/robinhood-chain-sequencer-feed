@@ -1,11 +1,16 @@
-"""Decode a capture file instead of a live socket — the basis of a backtest.
+"""Decode saved frames instead of a live socket — the basis of a backtest.
 
-    rhfeed capture --seconds 600 session.jsonl
-    uv run python examples/replay_capture.py session.jsonl
+    uv run python examples/replay_capture.py                 # the bundled frames
+    uv run python examples/replay_capture.py session.jsonl   # your own
 
-Same decoder, no network. Whatever strategy you write against `FeedConsumer` should
-run unchanged here, which is how you test it against known traffic before pointing
-it at a live relay. This prints a profile of what the capture contained.
+Same decoder, no network, no relay. Whatever you write against `FeedConsumer` runs
+unchanged here, which is how you test it against known traffic first. This prints a
+profile of what the frames contained — the quickest way to find out which contracts
+and selectors are worth filtering on.
+
+Saving your own is four lines of `websockets`: connect to the relay and write each
+raw message to a file, one per line. That is exactly the format read here, and how
+`tests/frames.jsonl` was made.
 """
 
 from __future__ import annotations
@@ -13,8 +18,11 @@ from __future__ import annotations
 import json
 import sys
 from collections import Counter
+from pathlib import Path
 
 from rhfeed import parse_frame
+
+BUNDLED = Path(__file__).resolve().parent.parent / "tests" / "frames.jsonl"
 
 
 def main(path: str) -> None:
@@ -57,6 +65,6 @@ def main(path: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit(f"usage: {sys.argv[0]} <capture.jsonl>")
-    main(sys.argv[1])
+    if len(sys.argv) > 2:
+        sys.exit(f"usage: {sys.argv[0]} [capture.jsonl]")
+    main(sys.argv[1] if len(sys.argv) == 2 else str(BUNDLED))

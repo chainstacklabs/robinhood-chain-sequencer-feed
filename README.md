@@ -38,7 +38,7 @@ which fetches its own Python 3.11+.
 ```bash
 docker compose up -d --wait relay   # --wait blocks until the relay is serving
 uv sync
-uv run rhfeed watch                 # Ctrl-C to stop
+uv run rhfeed                       # Ctrl-C to stop
 ```
 
 That's it. Columns are `hash · kind · to · selector`, grouped by block. Addresses are
@@ -59,30 +59,26 @@ memory and ~1.6% of a core, nothing written to disk. It is *not* a full node.
 
 ## Filter it
 
+There is one command and five flags.
+
 ```bash
 # ERC-20 approvals only
-uv run rhfeed watch --selector 0x095ea7b3
+uv run rhfeed --selector 0x095ea7b3
 # one contract — this one is the chain's busiest router, so it shows something
-uv run rhfeed watch --to 0xcaf681a66d020601342297493863e78c959e5cb2
-# one wallet, which costs a signature recovery per transaction. This one was an
-# active bot when we wrote this; wallets go quiet, contracts mostly don't
-uv run rhfeed watch --sender 0x830d44e14a9388e5b1880902b8370b951b622b9c
-uv run rhfeed watch --min-value 1000000000000000000   # ≥ 1 ETH
-uv run rhfeed watch --sender-column           # show who sent each tx
-uv run rhfeed watch --json                    # machine-readable, full addresses
-uv run rhfeed watch --seconds 30              # stop on a timer, not on Ctrl-C
+uv run rhfeed --to 0xcaf681a66d020601342297493863e78c959e5cb2
+# one wallet. Also prints who sent each transaction, which is the one expensive
+# field — see Speed. This was an active bot when we wrote it; wallets go quiet
+uv run rhfeed --sender 0x830d44e14a9388e5b1880902b8370b951b622b9c
+uv run rhfeed --json            # machine-readable, and the only place full addresses appear
+uv run rhfeed --seconds 30      # stop on a timer instead of Ctrl-C
+uv run rhfeed --feed mainnet    # skip the relay, straight at the public endpoint
 ```
 
-Not sure what to filter on? Record a minute and see what's actually busy:
+`--to`, `--selector` and `--sender` can each be repeated, and they combine.
 
-```bash
-uv run rhfeed capture --seconds 60 session.jsonl
-uv run python examples/replay_capture.py session.jsonl
-```
-
-Skipping the relay for a one-off look is `--feed mainnet` (or `testnet`, or any
-Nitro relay URL), which works on either side of the subcommand. Fine for a look,
-not for anything that runs — that's what the rate limit above is about.
+Not sure what to filter on? `uv run python examples/replay_capture.py` decodes the
+frames bundled for the tests and prints the busiest contracts and selectors. No
+relay needed — it reads from disk.
 
 Done looking? `docker compose down` stops the relay — it is set to restart with
 Docker otherwise.
@@ -122,7 +118,7 @@ Worked examples:
 |---|---|
 | [`token_flow.py`](examples/token_flow.py) | watch specific tokens — the cheap-filter pattern, start here. Its default (NVDA) is a thin market, so expect long gaps between matches; it prints a scan line every 15s so you can tell idle from broken |
 | [`copy_trade_signals.py`](examples/copy_trade_signals.py) | follow wallets, emit JSON signals — takes the addresses to follow as arguments |
-| [`replay_capture.py`](examples/replay_capture.py) | run the same code offline against a recording |
+| [`replay_capture.py`](examples/replay_capture.py) | run the same decoder offline against saved frames — no relay, no network |
 | [`bench.py`](examples/bench.py) | reproduce the numbers in the next section on your hardware |
 
 ## Read this before you trade on it

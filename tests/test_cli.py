@@ -15,35 +15,24 @@ import time
 import pytest
 
 from rhfeed import FeedConsumer, addr, sel
-from rhfeed.cli import ADDR_WIDTH, Filter, build_parser, short
+from rhfeed.cli import ADDR_WIDTH, Filter, build_parser, resolve_feed, short
 
 # --------------------------------------------------------------------------- #
-# argument placement
+# arguments
 # --------------------------------------------------------------------------- #
-
-
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ["--feed", "mainnet", "watch"],
-        ["watch", "--feed", "mainnet"],
-        ["--feed", "mainnet", "capture", "out.jsonl"],
-        ["capture", "out.jsonl", "--feed", "mainnet"],
-    ],
-)
-def test_feed_is_accepted_on_either_side_of_the_subcommand(argv):
-    assert build_parser().parse_args(argv).feed == "mainnet"
 
 
 def test_feed_defaults_to_the_local_relay():
-    assert build_parser().parse_args(["watch"]).feed == "ws://127.0.0.1:9642"
+    assert build_parser().parse_args([]).feed == "ws://127.0.0.1:9642"
 
 
-def test_a_subcommand_default_does_not_overwrite_an_earlier_feed():
-    """The reason --feed uses SUPPRESS on the subparsers."""
-    args = build_parser().parse_args(["--feed", "testnet", "watch", "--json"])
-    assert args.feed == "testnet"
-    assert args.json is True
+@pytest.mark.parametrize("name", ["mainnet", "testnet"])
+def test_named_feeds_resolve_to_robinhoods_endpoints(name):
+    assert resolve_feed(name).startswith("wss://feed.")
+
+
+def test_an_unrecognised_feed_is_passed_through_as_a_url():
+    assert resolve_feed("ws://10.0.0.5:9642") == "ws://10.0.0.5:9642"
 
 
 # --------------------------------------------------------------------------- #
@@ -76,7 +65,7 @@ def test_sel_says_what_was_wrong(value, message):
 
 
 def test_filter_rejects_a_bad_address_with_a_value_error():
-    args = build_parser().parse_args(["watch", "--to", "0xcaf681a6..."])
+    args = build_parser().parse_args(["--to", "0xcaf681a6..."])
     with pytest.raises(ValueError, match="not a hex address"):
         Filter(args)
 
