@@ -3,7 +3,8 @@
 A relay hands you JSON frames of the form ``{"version":1,"messages":[...]}``. Each
 message carries an ``l2Msg`` in base64; inside it is either one signed transaction
 or a length-prefixed batch of them, in the order the sequencer chose. No receipts,
-no logs, no state — this is pre-execution.
+no logs, no state — the outcome is not in the message, so a transaction here can
+still revert or be voided by the compliance filter.
 
 Everything here is a pure function over bytes. Nothing touches the network.
 
@@ -206,7 +207,7 @@ _LAYOUT = {
 
 
 class Tx:
-    """One signed transaction as it appeared in the feed, before execution.
+    """One signed transaction as the sequencer ordered it, without its outcome.
 
     Cheap and eager: `tx_type`, `nonce`, `gas`, `value`, `to_bytes`, `selector`.
     Expensive and lazy: `hash`, `to`, `sender`, `sender_bytes`.
@@ -487,8 +488,9 @@ def parse_frame(frame: dict[str, Any], decode_txs: bool = True) -> list[FeedMess
 def is_filtered_call(tx_hash: str) -> dict[str, Any]:
     """eth_call body asking the filter precompile whether a hash is blocked.
 
-    A transaction can appear in the feed and still never execute — see the README.
-    Send this to an RPC node; a non-zero result means the chain will refuse it.
+    A transaction can appear in the feed and still be voided — included in a block,
+    status 0x0, no logs, gas burned. See the README. Send this to an RPC node; a
+    non-zero result means the hash is registered and the chain will void it.
     """
     data = IS_FILTERED_SELECTOR + tx_hash.removeprefix("0x").rjust(64, "0")
     return {

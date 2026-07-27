@@ -12,12 +12,13 @@
   • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
 </p>
 
-# See Robinhood Chain transactions before they execute
+# See Robinhood Chain transactions before any RPC will show them
 
 Robinhood Chain has **no public mempool**. A transaction is invisible until
 Robinhood's sequencer decides its order — and the sequencer announces that decision
-on one WebSocket, before the transaction runs. Everything else (RPC, explorers,
-indexers) finds out later.
+on one WebSocket, carrying the ordering and the calldata but no result. Everything
+else (RPC, explorers, indexers) has to re-execute the block before it can tell you
+what happened, so it finds out later.
 
 This repo turns that WebSocket into structured data:
 
@@ -124,19 +125,23 @@ Worked examples:
 
 ## Read this before you trade on it
 
-**These are pre-confirmations, not settled transactions.** The sequencer has
-promised an ordering. Nothing has executed and nothing has been posted to Ethereum
-yet. Confirm against a node before you treat anything as final.
+**These are soft confirmations, not settled transactions.** The sequencer has
+committed to an ordering and has already built the block — the message even carries
+its `blockHash` — but it tells you nothing about the outcome, and nothing has been
+posted to Ethereum yet. A transaction here can still revert, be voided by the
+compliance filter, or be reordered entirely if the sequencer fails over before the
+batch lands. Confirm against a node before you treat anything as final.
 
 **Transactions here can be censored at the protocol level.** Robinhood Chain runs
 ArbOS 61 compliance filtering: an authorised party registers a transaction hash and
-the chain refuses to execute it — even if it arrived through Ethereum's
-force-inclusion path. **A transaction can appear in this feed and never take
-effect.** `rhfeed.is_filtered_call(tx_hash)` builds the `eth_call` that tells you
-whether a hash has been registered; send it to a node.
+the chain voids it — still included in a block, but with status `0x0`, no logs and
+the gas fully burned — even if it arrived through Ethereum's force-inclusion path.
+**A transaction can appear in this feed and never take effect.**
+`rhfeed.is_filtered_call(tx_hash)` builds the `eth_call` that tells you whether a
+hash has been registered; send it to a node.
 
-**There is nothing to front-run.** The feed reports what the sequencer already
-decided. You're reading, not racing.
+**There is nothing to front-run.** The feed reports what the sequencer has already
+decided and already executed. You're reading, not racing.
 
 ## Speed
 
@@ -201,6 +206,18 @@ for the compliance-filter check above.
 **One message = one block.** The sequence number *is* the L2 block number. Every
 block also contains one `ArbitrumInternalTx` the feed never carries, because the
 chain generates it rather than receiving it.
+
+**The block already exists when the message reaches you.** The envelope carries a
+populated `blockHash`, which the sequencer can only know after building the block —
+so it orders, executes, *then* broadcasts. What you are ahead of is every node that
+has to re-execute the message before it can serve you a receipt, not the execution
+itself. Useful side effect: you can check a decoded transaction set against that
+hash, and a mismatch at a sequence number you have already seen is a feed reorg.
+
+**The feed is unsigned.** `signatureV2` and `blockMetadata` come through empty on
+Robinhood's mainnet feed, so nothing cryptographically ties a message to Robinhood's
+sequencer — anything on the path could forge one. Checking the block hash against a
+node is the only verification available.
 
 **The backlog.** Every new client — of the public feed *and* of your own relay — is
 replayed history before live messages start. Measured against a local relay:

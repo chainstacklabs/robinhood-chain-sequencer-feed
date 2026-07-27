@@ -75,8 +75,8 @@ async def main(follow: set[bytes]) -> None:
                         "value_wei": tx.value,
                         "nonce": tx.nonce,
                         "gas": tx.gas,
-                        # Pre-execution. Not a fill, not a receipt, not final.
-                        "status": "sequenced_not_executed",
+                        # Soft confirmation. Not a fill, not a receipt, not final.
+                        "status": "soft_confirmed",
                     }
                 ),
                 flush=True,
@@ -93,15 +93,16 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # Before you trade on this
 #
-# 1. A feed message is a pre-confirmation. The sequencer has committed to an
-#    ordering; the transaction has not executed and the batch has not been posted
-#    to Ethereum. You are reacting to intent. Confirm against a node before you
-#    treat anything as settled.
+# 1. A feed message is a soft confirmation. The sequencer has committed to an
+#    ordering and has already built the block, but the message carries no outcome
+#    and the batch has not been posted to Ethereum. Confirm against a node before
+#    you treat anything as settled.
 #
 # 2. Robinhood Chain filters transactions at the protocol level (ArbOS 61). An
-#    authorised filterer can register a hash and the chain will refuse to execute
-#    it — including transactions that arrive through Ethereum's force-inclusion
-#    path. A transaction can appear in this feed and never take effect.
+#    authorised filterer can register a hash and the chain voids it — included in a
+#    block, status 0x0, gas burned — including transactions that arrive through
+#    Ethereum's force-inclusion path. A transaction can appear in this feed and
+#    never take effect.
 #    `rhfeed.is_filtered_call(tx_hash)` builds the eth_call that answers whether a
 #    hash is registered; send it to an RPC node.
 #
