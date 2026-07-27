@@ -210,9 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     # given before the subcommand.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--feed", default=argparse.SUPPRESS, help=FEED_HELP)
-    common.add_argument(
-        "--quiet", action="store_true", default=argparse.SUPPRESS, help=QUIET_HELP
-    )
+    common.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS, help=QUIET_HELP)
 
     sub = ap.add_subparsers(dest="command", required=True)
 
