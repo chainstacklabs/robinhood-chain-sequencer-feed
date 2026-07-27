@@ -1,0 +1,52 @@
+[project]
+name = "rhfeed"
+version = "0.2.0"
+description = "Decode an Arbitrum Orbit sequencer feed, fast enough to act on it"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "websockets>=13",
+    "eth-hash[pycryptodome]>=0.7",
+    # Not optional. Sender recovery is the most expensive thing the decoder does, and
+    # coincurve is the difference between ~0.1 ms and several milliseconds per
+    # transaction — more than the head start the feed gives you in the first place.
+    "coincurve>=20",
+    # 2-3x faster than the stdlib json on frames this size. The consumer falls back to
+    # the stdlib when it is missing, so this is a speed dependency, not a hard one.
+    "orjson>=3.10",
+]
+
+[project.optional-dependencies]
+# Reference implementations, used only to cross-check the fast paths in tests and to
+# measure what they buy. Nothing in src/ imports these.
+dev = [
+    "pytest>=8",
+    "eth-account>=0.13",
+    "rlp>=4",
+]
+
+[project.scripts]
+rhfeed = "rhfeed.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rhfeed"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "ASYNC"]
+
+[tool.ruff.lint.per-file-ignores]
+# The decoder must never let a malformed frame reach the consumer.
+"src/rhfeed/codec.py" = ["BLE001"]
+"src/rhfeed/consume.py" = ["BLE001"]
+"tests/*" = ["S101"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

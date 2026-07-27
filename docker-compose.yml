@@ -1,0 +1,29 @@
+# Offchain Labs' own relay binary, pointed at Robinhood Chain.
+#
+#   docker compose up -d relay
+#   rhfeed watch
+#
+# `entrypoint: relay` selects a different binary from the nitro-node image: it holds
+# one upstream WebSocket and re-serves it, with no sync, no execution and no
+# database. Measured against this chain it sits at ~23 MB of memory and ~1.5% of a
+# core, and writes nothing to disk.
+#
+# Consumers — including full Nitro nodes via --node.feed.input.url — connect to
+# ws://<host>:9642 and share this one upstream connection. That matters because the
+# public feed rate-limits per client, not per connection.
+
+services:
+  relay:
+    image: offchainlabs/nitro-node:v3.11.2-3599aca
+    entrypoint: relay
+    restart: unless-stopped
+    ports:
+      # Bound to localhost. Publish it wider only behind your own network controls —
+      # the relay has no authentication of its own.
+      - "127.0.0.1:9642:9642"
+    command:
+      - --node.feed.output.addr=0.0.0.0
+      - --node.feed.input.url=wss://feed.mainnet.chain.robinhood.com
+      - --chain.id=4663
+    # The relay holds everything in memory and needs very little of it.
+    mem_limit: 512m
