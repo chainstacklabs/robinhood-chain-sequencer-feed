@@ -58,6 +58,16 @@ because Robinhood rate-limits **per client, not per connection**, so opening fiv
 sockets yourself splits one client's budget five ways. It's also cheap: 23 MB of
 memory and ~1.6% of a core, nothing written to disk. It is *not* a full node.
 
+Two things a relay does not give you, so you know what you're trading:
+
+- **It verifies nothing.** A relay has no L1 connection, so it cannot check who signed
+  its upstream, and its defaults accept every signature. Pass `--verify` at your end;
+  see [Verify it](#verify-it).
+- **It hides reorgs.** `broadcastclients.go` dedups by sequence number over a
+  10-second window, and a reorg *is* a re-sent sequence number — so the replacement is
+  dropped inside the relay and the signal never reaches your side of it at all. Read
+  the sequencer feed directly (`--feed mainnet`) if reorgs matter to you.
+
 ## Filter it
 
 There is one command and seven flags.
@@ -79,11 +89,15 @@ uv run rhfeed --verify          # drop anything not signed by the sequencer key
 `--to`, `--selector` and `--sender` can each be repeated, and they combine.
 
 `--verify` checks the signature every message carries and drops the ones that fail,
-reporting the count in the summary line even when it is zero. Worth turning on
-whenever the feed is one you don't control — a public endpoint, someone else's relay,
-a capture handed to you. It costs one signature recovery per message and is off by
-default, because the default URL is a relay you run that verified its own upstream
-already. See [Verify it](#verify-it).
+reporting the count in the summary line even when it is zero. It costs one signature
+recovery per message — around 0.1 ms against a feed delivering tens of messages a
+second.
+
+**Turn it on.** It is off by default only for backward compatibility, and the reason
+this README used to give for leaving it off was wrong: a relay you run does *not* verify
+its upstream. The stock `relay` binary verifies nothing at all — see
+[Verify it](#verify-it). So the local-relay case is not the safe case; it is the case
+where nobody has checked.
 
 Not sure what to filter on? `uv run python examples/replay_capture.py` decodes the
 frames bundled for the tests and ranks the contracts, selectors and wallets in them.
@@ -152,9 +166,32 @@ makes by default.
 Worth being clear about what it buys you, since the transport is already `wss`. TLS
 tells you that you reached whatever sits in front of the endpoint. The signature tells
 you the message was produced by the sequencer's key — a claim that survives a
-compromised CDN edge, a proxy of your own, a relay you don't operate, and a capture
-off disk. It says nothing about whether the transaction will succeed; see the next
-section for that.
+compromised CDN edge, a proxy of your own, any relay including one you run yourself,
+and a capture off disk. It says nothing about whether the transaction will succeed; see
+the next section for that.
+
+**A relay does not do this for you.** It is tempting to assume the relay in
+[`docker-compose.yml`](docker-compose.yml) validates its upstream and that a consumer
+behind it can therefore skip the check. It does not, and the defaults are the reason:
+
+- `relay/relay.go` passes `nil` for the `addrVerifier` argument of
+  `NewBroadcastClients` — a relay has no L1 connection, so it cannot resolve who the
+  batch posters are.
+- `DefaultFeedVerifierConfig` in `util/signature/verifier.go` sets
+  `AcceptSequencer: true` **and** `Dangerous.AcceptMissing: true`.
+- Those two combine at `verifier.go`: `if v.config.Dangerous.AcceptMissing &&
+  v.addrVerifier == nil { return nil }` — every signature is accepted, valid or forged.
+
+So `--node.feed.input.verify.accept-sequencer` is inert inside the relay binary, and the
+stock relay performs no effective verification. (Verified against Nitro v3.11.2, the
+image this repo pins.) Tightening it is not a flag flip either: setting
+`accept-missing=false` while `accept-sequencer=true` with no address verifier makes
+`NewVerifier` fail with "cannot read batch poster addresses". A relay that must check
+has to pin `--node.feed.input.verify.allowed-addresses` instead.
+
+The relay is still the right place to fan out from, and it never *weakens* a signature —
+it copies `signatureV2` through verbatim and refuses to re-sign. End-to-end verification
+works precisely because the relay is transparent. Just do the checking at your end.
 
 A message that fails verification is dropped without advancing the sequence watermark,
 so injecting one frame can't make a reconnect skip the real messages behind it. If
