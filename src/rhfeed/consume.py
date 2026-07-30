@@ -24,6 +24,17 @@ send *the entire backlog* (`clientconnection.go`, "error finding requested seque
 number in backlog: sending the entire backlog instead"). Re-requesting the last
 seen number is always in range, and costs exactly one duplicate, which is dropped.
 
+**Reorgs.** A re-sent sequence number is not necessarily a duplicate. Nitro has no
+reorg message type at all: `addMessagesAndReorg` re-broadcasts from the reorg point, so
+the replacement arrives under a sequence number you have already seen, carrying a
+different `blockHash`. Comparing that hash is the only detection the protocol offers,
+which is why recent hashes are kept here. A real reorg rewinds the watermark, is
+counted in `stats["reorgs"]`, warns, and arrives with `msg.reorg` set; a true duplicate
+is still dropped silently. Worth knowing that a relay hop destroys this signal —
+`broadcastclients.go` dedups by sequence number on a 10-second window and returns the
+replacement to nobody — so reorg visibility is a reason to read the sequencer feed
+directly even though a relay is the better place to fan out from.
+
 **Sender recovery on the hot path.** Never done here. `tx.sender` is lazy — ask for
 it on the handful of transactions that survive your filter, not on all of them.
 
@@ -87,6 +98,7 @@ class FeedConsumer:
         reconnect_delay: float = 0.5,
         max_reconnect_delay: float = 30.0,
         stall_warning: float = 30.0,
+        reorg_window: int = 1024,
     ) -> None:
         self.url = url
         #: Drop messages that do not carry a good signature from an allowed signer.
@@ -102,6 +114,10 @@ class FeedConsumer:
         #: produces several blocks a second, so silence this long is a fault
         #: somewhere, usually the relay's own upstream. 0 disables the check.
         self.stall_warning = stall_warning
+        #: How many recent block hashes to keep for reorg detection. At ~115 ms a block
+        #: the default covers about two minutes, comfortably past the 10-second window
+        #: within which a relay would have swallowed the replay anyway.
+        self.reorg_window = reorg_window
 
         self.stats = {
             "frames": 0,
@@ -110,11 +126,13 @@ class FeedConsumer:
             "duplicate_messages": 0,
             "unverified_messages": 0,
             "reconnects": 0,
+            "reorgs": 0,
         }
         self._live = False
         self._highest_seq = -1
         self._last_frame_at = 0.0
         self._warned_unverified = False
+        self._hashes: dict[int, str] = {}
 
     @property
     def is_live(self) -> bool:
@@ -219,9 +237,10 @@ class FeedConsumer:
                         async for raw in ws:
                             self.stats["frames"] += 1
                             received = time.time()
-                            self._last_frame_at = time.monotonic()
+                            mono = self._last_frame_at = time.monotonic()
                             for msg in self._frame(_loads(raw), started, decode_backlog):
                                 msg.received_at = received
+                                msg.received_monotonic = mono
                                 yield msg
                 except asyncio.CancelledError:
                     raise
@@ -266,16 +285,57 @@ class FeedConsumer:
         # future drift in that contract into an error rather than a signature checked
         # against the wrong message.
         for entry, msg in zip(entries, messages, strict=True):
-            if msg.seq <= self._highest_seq:
-                self.stats["duplicate_messages"] += 1
-                continue
+            # Verify before the watermark is consulted, not after. Both branches below
+            # can move the watermark — forward for a new message, *backward* for a
+            # reorg — so a message that cannot be trusted must not reach either.
             if self.verify is not None and not self.verify.accepts(entry):
                 self._reject(entry, msg.seq)
                 continue
+            if msg.seq <= self._highest_seq:
+                if not self._is_reorg(msg):
+                    self.stats["duplicate_messages"] += 1
+                    continue
+                # A reorg replaces this sequence number and everything after it, so the
+                # watermark rewinds to just below it and the replacements that follow
+                # are delivered as ordinary new messages.
+                self.stats["reorgs"] += 1
+                msg.reorg = True
+                self._highest_seq = msg.seq - 1
+                _log.warning(
+                    "feed reorg at seq %d: block hash changed from %s to %s. "
+                    "Anything you derived from the old block is now stale",
+                    msg.seq,
+                    self._hashes.get(msg.seq),
+                    msg.block_hash,
+                )
             self._highest_seq = msg.seq
+            self._remember(msg)
             msg.live = live
             self.stats["live_messages" if live else "backlog_messages"] += 1
             yield msg
+
+    def _is_reorg(self, msg: FeedMessage) -> bool:
+        """Whether a re-sent sequence number is a replacement rather than a duplicate.
+
+        Nitro has no reorg message type. `addMessagesAndReorg` simply re-broadcasts from
+        the reorg point, so the same sequence number arrives again carrying a different
+        block hash — that difference is the entire signal, which is why `block_hash` has
+        to be kept rather than decoded and dropped.
+
+        Unknown hash on either side means unknown, so this says no. Better to treat a
+        reorg as a duplicate than to rewind the watermark on a message we cannot compare.
+        """
+        previous = self._hashes.get(msg.seq)
+        return bool(previous and msg.block_hash) and previous != msg.block_hash
+
+    def _remember(self, msg: FeedMessage) -> None:
+        """Record seq -> block hash, keeping the window bounded."""
+        if not msg.block_hash:
+            return
+        self._hashes[msg.seq] = msg.block_hash
+        if len(self._hashes) > self.reorg_window * 2:
+            cutoff = self._highest_seq - self.reorg_window
+            self._hashes = {s: h for s, h in self._hashes.items() if s > cutoff}
 
     def _reject(self, entry: dict, seq: int) -> None:
         """Drop a message that failed verification, without advancing the watermark.
