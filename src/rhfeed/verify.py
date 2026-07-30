@@ -9,10 +9,16 @@ recovery, both local.
 Why bother, given the transport is already `wss`? TLS tells you that you are talking
 to whatever is in front of the endpoint. The signature tells you the message was
 produced by the key that posts this chain's batches to Ethereum — a claim that
-survives a compromised CDN edge, a proxy of your own, a relay you do not operate, and
-a `.jsonl` capture someone hands you. It is also the check a stock Nitro node makes by
-default (`--feed.input.verify.accept-sequencer`), so declining to make it puts you
-strictly behind the software everyone else on the chain is running.
+survives a compromised CDN edge, a proxy of your own, any relay including one you run
+yourself, and a `.jsonl` capture someone hands you. It is also the check a stock Nitro
+*node* makes by default (`--feed.input.verify.accept-sequencer`), so declining to make
+it puts you strictly behind the software everyone else on the chain is running.
+
+Note the emphasis on node. A stock **relay** makes no such check: it has no L1
+connection, so it passes `nil` for `NewBroadcastClients`' `addrVerifier`, and
+`DefaultFeedVerifierConfig` ships `Dangerous.AcceptMissing: true`, which together
+short-circuit every signature to accepted. `accept-sequencer` is inert in the relay
+binary.
 
     from rhfeed import MAINNET_VERIFIER, FeedConsumer
 
@@ -21,8 +27,8 @@ strictly behind the software everyone else on the chain is running.
 
 Cost is one ECDSA recovery per *message*, which is the same order as recovering one
 transaction sender — call it ~0.1 ms, against a feed that delivers tens of messages a
-second. Cheap, but not free, and pointless against a relay you run yourself that
-already verified upstream. So it is opt-in.
+second. Cheap, but not free, which is the only reason it is opt-in rather than the
+default. There is no feed this is pointless against.
 
 **The preimage.** `BroadcastFeedMessage.SignatureHash` in Nitro's
 `broadcaster/message/message.go`. Field order matters, and two details are easy to get

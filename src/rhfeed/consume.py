@@ -27,13 +27,18 @@ seen number is always in range, and costs exactly one duplicate, which is droppe
 **Sender recovery on the hot path.** Never done here. `tx.sender` is lazy — ask for
 it on the handful of transactions that survive your filter, not on all of them.
 
-**Signatures.** Off by default, because the default URL is a relay you run and it
-verified its own upstream. Pass `verify=MAINNET_VERIFIER` when the feed is one you do
-not control — a public endpoint, someone else's relay, a capture off disk — and
-messages that do not carry a good signature from the chain's sequencer key are
-dropped before you see them. A rejected message does not advance the sequence
-watermark, so injecting one cannot make a reconnect skip the real ones behind it. See
-`verify.py` for what the signature covers and what it is worth.
+**Signatures.** Pass `verify=MAINNET_VERIFIER` and messages that do not carry a good
+signature from the chain's sequencer key are dropped before you see them. A rejected
+message does not advance the sequence watermark, so injecting one cannot make a
+reconnect skip the real ones behind it. See `verify.py` for what the signature covers.
+
+Off by default for backward compatibility only. Pointing at a relay you run is *not* a
+reason to skip it: the stock `relay` binary verifies nothing. It passes `nil` for
+`NewBroadcastClients`' `addrVerifier` because it has no L1 connection to resolve batch
+posters with, and `DefaultFeedVerifierConfig` ships `AcceptMissing: true`, so
+`verifier.go` short-circuits every signature to accepted. The relay copies `signatureV2`
+through verbatim and refuses to re-sign, which is what makes end-to-end verification
+work — but it means the checking has to happen here.
 
 **Silence.** A relay that is not running, a relay whose own upstream connection is
 down, a relay still replaying its backlog, and a chain that happens to be quiet all
@@ -90,9 +95,10 @@ class FeedConsumer:
     ) -> None:
         self.url = url
         #: Drop messages that do not carry a good signature from an allowed signer.
-        #: Off by default: it costs an ECDSA recovery per message, and the default URL
-        #: is a relay you run, which verified its own upstream already. Pass
-        #: `MAINNET_VERIFIER` when reading a feed you do not control.
+        #: Off by default for backward compatibility, not because it is unnecessary —
+        #: a relay you run verifies nothing of its own (see the module docstring), so
+        #: passing `MAINNET_VERIFIER` is the right call against any feed, local or not.
+        #: Costs one ECDSA recovery per message, ~0.1 ms.
         self.verify = verify
         self.live_threshold = live_threshold
         self.max_backlog_seconds = max_backlog_seconds
