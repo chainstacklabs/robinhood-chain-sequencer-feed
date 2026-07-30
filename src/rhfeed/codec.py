@@ -428,21 +428,64 @@ def decode_l2_message(payload: bytes) -> list[Tx]:
 
 
 class FeedMessage:
-    """One sequencer message. On this chain, `seq` equals the L2 block number."""
+    """One sequencer message. On this chain, `seq` equals the L2 block number.
 
-    __slots__ = ("l1_kind", "l1_sender", "live", "received_at", "seq", "timestamp", "txs")
+    `block_hash` is the block the sequencer had already built when it broadcast this —
+    it orders, executes, *then* announces. Two uses: ask a node for exactly this block
+    (`eth_getBlockReceipts` takes a hash, so you need no polling by number), and tell a
+    reorg from a duplicate, which is the only way the protocol offers. See
+    `FeedConsumer`.
+
+    `delayed_messages_read` is the running count of delayed-inbox messages the chain has
+    consumed. A jump between consecutive messages means the sequencer just pulled that
+    many out of the delayed inbox — L1 deposits, retryables, or a force inclusion
+    routing around the sequencer entirely.
+
+    `l1_block_number` is the parent-chain (Ethereum) block the sequencer had seen.
+    """
+
+    __slots__ = (
+        "block_hash",
+        "delayed_messages_read",
+        "l1_block_number",
+        "l1_kind",
+        "l1_sender",
+        "live",
+        "received_at",
+        "received_monotonic",
+        "reorg",
+        "seq",
+        "timestamp",
+        "txs",
+    )
 
     def __init__(
-        self, seq: int, l1_kind: int, l1_sender: str | None, timestamp: int, txs: list[Tx]
+        self,
+        seq: int,
+        l1_kind: int,
+        l1_sender: str | None,
+        timestamp: int,
+        txs: list[Tx],
+        block_hash: str | None = None,
+        delayed_messages_read: int = 0,
+        l1_block_number: int = 0,
     ) -> None:
         self.seq = seq
         self.l1_kind = l1_kind
         self.l1_sender = l1_sender
         self.timestamp = timestamp
         self.txs = txs
+        self.block_hash = block_hash
+        self.delayed_messages_read = delayed_messages_read
+        self.l1_block_number = l1_block_number
         # Set by FeedConsumer; meaningless for a frame decoded straight off disk.
         self.live = True
         self.received_at = 0.0
+        # Wall clock is what you report; monotonic is what you subtract. An NTP step
+        # between two `received_at` reads can produce a negative interval.
+        self.received_monotonic = 0.0
+        #: This sequence number arrived before, carrying a different block hash.
+        self.reorg = False
 
     @property
     def l1_kind_name(self) -> str:
@@ -465,7 +508,8 @@ def parse_frame(frame: dict[str, Any], decode_txs: bool = True) -> list[FeedMess
     """
     out: list[FeedMessage] = []
     for entry in frame.get("messages") or ():
-        incoming = (entry.get("message") or {}).get("message") or {}
+        wrapper = entry.get("message") or {}
+        incoming = wrapper.get("message") or {}
         header = incoming.get("header") or {}
         l2_msg = incoming.get("l2Msg")
         out.append(
@@ -475,6 +519,9 @@ def parse_frame(frame: dict[str, Any], decode_txs: bool = True) -> list[FeedMess
                 l1_sender=header.get("sender"),
                 timestamp=header.get("timestamp", 0),
                 txs=decode_l2_message(base64.b64decode(l2_msg)) if (l2_msg and decode_txs) else [],
+                block_hash=entry.get("blockHash"),
+                delayed_messages_read=wrapper.get("delayedMessagesRead") or 0,
+                l1_block_number=header.get("blockNumber") or 0,
             )
         )
     return out
@@ -491,8 +538,16 @@ def is_filtered_call(tx_hash: str) -> dict[str, Any]:
     A transaction can appear in the feed and still be voided — included in a block,
     status 0x0, no logs, gas burned. See the README. Send this to an RPC node; a
     non-zero result means the hash is registered and the chain will void it.
+
+    The hash is checked here rather than left to the node: a short or malformed one
+    still ABI-encodes into a perfectly well-formed `eth_call`, and the node would answer
+    it about the wrong slot instead of refusing. A false "not filtered" is the one
+    answer this function must never invent.
     """
-    data = IS_FILTERED_SELECTOR + tx_hash.removeprefix("0x").rjust(64, "0")
+    raw = _unhex(tx_hash, "transaction hash")
+    if len(raw) != 32:
+        raise ValueError(f"not a 32-byte transaction hash: {tx_hash!r} is {len(raw)} bytes")
+    data = IS_FILTERED_SELECTOR + raw.hex()
     return {
         "jsonrpc": "2.0",
         "id": 1,
