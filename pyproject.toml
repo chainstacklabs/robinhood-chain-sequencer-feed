@@ -7,7 +7,10 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
-    "websockets>=13",
+    # 14 is the floor, not 13: the consumer passes `additional_headers`, which only
+    # exists on the asyncio client that became `websockets.connect` in 14.0. On 13 the
+    # legacy client forwards it to create_connection and dies at connect time.
+    "websockets>=14",
     "eth-hash[pycryptodome]>=0.7",
     # Not optional. Sender recovery is the most expensive thing the decoder does, and
     # coincurve is the difference between ~0.1 ms and several milliseconds per
