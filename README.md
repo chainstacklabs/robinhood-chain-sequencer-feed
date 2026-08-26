@@ -14,6 +14,8 @@
 
 # See Robinhood Chain transactions before any RPC will show them
 
+> **Experimental.** A reference implementation, not for production use.
+
 Robinhood Chain has **no public mempool**. A transaction is invisible until
 Robinhood's sequencer decides its order — and the sequencer announces that decision
 on one WebSocket, carrying the ordering and the calldata but no result. Everything
