@@ -81,9 +81,19 @@ class Filter:
 
 
 async def watch(args: argparse.Namespace) -> None:
-    consumer = FeedConsumer(
-        resolve_feed(args.feed), verify=MAINNET_VERIFIER if args.verify else None
-    )
+    url = resolve_feed(args.feed)
+    if args.verify and url == TESTNET_FEED:
+        # The chain id is part of the signature preimage, so MAINNET_VERIFIER against
+        # a testnet message recovers an unrelated address and rejects it. Every
+        # message would be dropped and the run would print nothing, which reads like a
+        # dead feed rather than a verifier pointed at the wrong chain.
+        sys.exit(
+            "rhfeed: --verify only knows mainnet's chain id and signer, and the chain "
+            "id is signed, so every testnet message would be dropped. Drop --verify, "
+            "or build a Verifier with the testnet chain id and signer and pass it to "
+            "FeedConsumer directly."
+        )
+    consumer = FeedConsumer(url, verify=MAINNET_VERIFIER if args.verify else None)
     try:
         keep = Filter(args)
     except ValueError as exc:
@@ -171,8 +181,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--verify",
         action="store_true",
-        help="drop messages not signed by Robinhood Chain's sequencer key. Worth it on "
-        "a feed you do not control; costs one signature recovery per message",
+        help="drop messages not signed by Robinhood Chain mainnet's sequencer key. "
+        "Worth it on a feed you do not control; costs one signature recovery per "
+        "message. Mainnet only — the chain id is signed, so this cannot check testnet",
     )
     ap.add_argument("--to", action="append", help="only transactions to this address")
     ap.add_argument("--selector", action="append", help="only calls with this 4-byte selector")
