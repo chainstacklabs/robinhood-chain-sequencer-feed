@@ -93,7 +93,9 @@ uv run rhfeed --verify          # drop anything not signed by the sequencer key
 `--verify` checks the signature every message carries and drops the ones that fail,
 reporting the count in the summary line even when it is zero. It costs one signature
 recovery per message — around 0.1 ms against a feed delivering tens of messages a
-second.
+second. It knows mainnet's chain id and signer only; the chain id is part of what is
+signed, so `--verify` with `--feed testnet` is refused rather than dropping every
+message. Build a `Verifier` with the testnet chain id and signer to check that feed.
 
 **Turn it on.** It is off by default only for backward compatibility, and the reason
 this README used to give for leaving it off was wrong: a relay you run does *not* verify

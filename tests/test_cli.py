@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
+from pathlib import Path
 
 import pytest
 
-from rhfeed import FeedConsumer, addr, sel
+from rhfeed import MAINNET_CHAIN_ID, MAINNET_VERIFIER, FeedConsumer, addr, recover_signer, sel
 from rhfeed.cli import ADDR_WIDTH, Filter, build_parser, resolve_feed, short
 
 # --------------------------------------------------------------------------- #
@@ -68,6 +70,74 @@ def test_filter_rejects_a_bad_address_with_a_value_error():
     args = build_parser().parse_args(["--to", "0xcaf681a6..."])
     with pytest.raises(ValueError, match="not a hex address"):
         Filter(args)
+
+
+# --------------------------------------------------------------------------- #
+# --verify is bound to one chain
+# --------------------------------------------------------------------------- #
+
+
+def test_the_chain_id_is_part_of_what_is_signed():
+    """Why --verify cannot be pointed at another chain.
+
+    The chain id goes into the preimage, so recovering with the wrong one does not
+    fail — it returns a different, perfectly well-formed address that no signer set
+    contains. That is what makes a mismatched verifier drop every message instead of
+    saying anything.
+    """
+    message = json.loads((Path(__file__).parent / "verified_message.json").read_text())
+
+    right = recover_signer(message, MAINNET_CHAIN_ID)
+    wrong = recover_signer(message, MAINNET_CHAIN_ID + 1)
+
+    assert right in MAINNET_VERIFIER.signers
+    assert wrong is not None, "a wrong chain id still recovers, which is the problem"
+    assert wrong not in MAINNET_VERIFIER.signers
+
+
+def test_verify_against_the_testnet_feed_is_refused_not_silently_empty(monkeypatch):
+    """`--feed testnet --verify` used to connect and then drop every message.
+
+    The consumer is stubbed out so that removing the refusal fails this fast rather
+    than opening a socket to the real testnet feed and running until cancelled.
+    """
+    import rhfeed.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "FeedConsumer", _NoFeed)
+    args = build_parser().parse_args(["--feed", "testnet", "--verify"])
+    with pytest.raises(SystemExit) as exit_info:
+        asyncio.run(cli_module.watch(args))
+
+    assert "testnet" in str(exit_info.value)
+    assert "--verify" in str(exit_info.value)
+
+
+@pytest.mark.parametrize("argv", [["--feed", "testnet"], ["--feed", "mainnet", "--verify"]])
+def test_the_refusal_is_narrow(argv, monkeypatch):
+    """Only the combination is refused; each option on its own still runs."""
+    import rhfeed.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "FeedConsumer", _NoFeed)
+    asyncio.run(cli_module.watch(cli_module.build_parser().parse_args(argv)))
+
+
+class _NoFeed:
+    """A consumer that connects to nothing and yields nothing."""
+
+    stats = dict.fromkeys(
+        ("live_messages", "backlog_messages", "reconnects", "unverified_messages"), 0
+    )
+
+    def __init__(self, url, *, verify=None, **kwargs):
+        self.url = url
+        self.verify = verify
+
+    def live(self):
+        async def empty():
+            return
+            yield  # pragma: no cover
+
+        return empty()
 
 
 # --------------------------------------------------------------------------- #
