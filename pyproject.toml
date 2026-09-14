@@ -23,11 +23,12 @@ dependencies = [
 
 [project.optional-dependencies]
 # Reference implementations, used only to cross-check the fast paths in tests and to
-# measure what they buy. Nothing in src/ imports these.
+# measure what they buy, plus the linter. Nothing in src/ imports these.
 dev = [
     "pytest>=8",
     "eth-account>=0.13",
     "rlp>=4",
+    "ruff==0.16.7",
 ]
 
 [project.scripts]
