@@ -13,9 +13,10 @@ PR is where you show it.
 - Run the checks:
 
   ```bash
+  uv sync --extra dev
   uv run pytest
-  uvx ruff@0.16.7 check src tests
-  uvx ruff@0.16.7 format --check src tests
+  uv run ruff check src tests
+  uv run ruff format --check src tests
   ```
 
 ## The PR
