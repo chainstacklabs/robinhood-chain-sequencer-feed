@@ -36,7 +36,7 @@ leave them or delete them as you like. Longer version: .github/CONTRIBUTING.md
 <!-- Evidence, not assertions. Paste the output:
 
      - `uv run pytest` — the count before and after
-     - `uvx ruff check src tests` and `uvx ruff format --check src tests`
+     - `uvx ruff@0.16.7 check src tests` and `uvx ruff@0.16.7 format --check src tests`
      - red/green — revert only the fix, keep the new tests, and say which test
        fails and which still pass (a test that fails either way is not pinning
        your change; one that passes either way is not testing it)

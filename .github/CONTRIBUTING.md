@@ -14,8 +14,8 @@ is where you show it.
 
   ```bash
   uv run pytest
-  uvx ruff check src tests
-  uvx ruff format --check src tests
+  uvx ruff@0.16.7 check src tests
+  uvx ruff@0.16.7 format --check src tests
   ```
 
 - Add tests that fail without your change. A test that passes on `main` is not
