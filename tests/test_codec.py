@@ -24,11 +24,15 @@ from eth_account import Account
 from eth_utils import to_checksum_address
 
 from rhfeed.codec import (
+    L2_BATCH,
+    L2_SIGNED_TX,
+    MAX_BATCH_DEPTH,
     _rlp_list,
     _rlp_uint,
     _scan_list,
     addr,
     checksum,
+    decode_l2_message,
     decode_transaction,
     parse_frame,
     sel,
@@ -223,6 +227,49 @@ def test_unknown_envelope_type_keeps_the_hash():
 @pytest.mark.parametrize("junk", [b"\x02\xff\xff", b"\x02", b"\xc0", b"\x02\xc0"])
 def test_truncated_input_does_not_raise(junk):
     decode_transaction(junk)  # a bad frame must not take the consumer down
+
+
+# --------------------------------------------------------------------------- #
+# batch nesting
+# --------------------------------------------------------------------------- #
+
+
+def _signed_l2_msg(nonce: int) -> bytes:
+    signed = ACCOUNT.sign_transaction({**TEMPLATES["eip1559"], "nonce": nonce})
+    return bytes([L2_SIGNED_TX]) + bytes(signed.raw_transaction)
+
+
+def _batch(*messages: bytes) -> bytes:
+    body = b"".join(len(m).to_bytes(8, "big") + m for m in messages)
+    return bytes([L2_BATCH]) + body
+
+
+def _nest(message: bytes, times: int) -> bytes:
+    for _ in range(times):
+        message = _batch(message)
+    return message
+
+
+def test_batch_flattens_nested_signed_transactions():
+    txs = decode_l2_message(_batch(_signed_l2_msg(0), _signed_l2_msg(1), _signed_l2_msg(2)))
+    assert [t.nonce for t in txs] == [0, 1, 2]
+
+
+def test_batch_nesting_at_the_cap_still_decodes():
+    # arbos accepts up to MAX_BATCH_DEPTH levels (the outermost batch is depth 0).
+    txs = decode_l2_message(_nest(_signed_l2_msg(0), MAX_BATCH_DEPTH))
+    assert len(txs) == 1
+
+
+def test_batch_nesting_past_the_cap_is_dropped():
+    # arbos rejects a batch at depth >= MAX_BATCH_DEPTH, so its transactions never
+    # execute; surfacing them would be a false positive for a mempool view.
+    assert decode_l2_message(_nest(_signed_l2_msg(0), MAX_BATCH_DEPTH + 1)) == []
+
+
+def test_pathologically_deep_batch_does_not_recurse_without_bound():
+    # Untrusted feed data must not be able to exhaust the stack.
+    assert decode_l2_message(_nest(_signed_l2_msg(0), 10_000)) == []
 
 
 # --------------------------------------------------------------------------- #

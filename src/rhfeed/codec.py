@@ -54,6 +54,11 @@ L1_KIND = {
 L2_BATCH = 3
 L2_SIGNED_TX = 4
 
+# arbos/parse_l2.go caps batch nesting: parseL2Message rejects a batch at
+# depth >= 16. A batch nested past that never reaches the state transition, so
+# its transactions do not execute and must not be surfaced.
+MAX_BATCH_DEPTH = 16
+
 FILTER_PRECOMPILE = "0x0000000000000000000000000000000000000074"
 IS_FILTERED_SELECTOR = "0x85c733a4"
 
@@ -409,7 +414,7 @@ def _split_batch(payload: bytes) -> Iterator[bytes]:
         offset += length
 
 
-def decode_l2_message(payload: bytes) -> list[Tx]:
+def decode_l2_message(payload: bytes, depth: int = 0) -> list[Tx]:
     """Walk an l2Msg, flattening nested batches into the signed transactions inside."""
     if not payload:
         return []
@@ -418,7 +423,14 @@ def decode_l2_message(payload: bytes) -> list[Tx]:
         tx = decode_transaction(payload[1:])
         return [tx] if tx else []
     if kind == L2_BATCH:
-        return [tx for nested in _split_batch(payload[1:]) for tx in decode_l2_message(nested)]
+        if depth >= MAX_BATCH_DEPTH:
+            # Too deep for arbos to accept, so nothing below here executes.
+            return []
+        return [
+            tx
+            for nested in _split_batch(payload[1:])
+            for tx in decode_l2_message(nested, depth + 1)
+        ]
     return []
 
 
