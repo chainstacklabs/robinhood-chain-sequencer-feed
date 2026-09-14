@@ -9,8 +9,10 @@
 #
 # `entrypoint: relay` selects a different binary from the nitro-node image: it holds
 # one upstream WebSocket and re-serves it, with no sync, no execution and no
-# database. Measured against this chain it sits at ~23 MB of memory and ~1.5% of a
-# core, and writes nothing to disk.
+# database. Measured against this chain, idle with no consumers attached, it sits at
+# 28-41 MB of memory and ~1% of a core, and writes nothing to disk (0 bytes to the
+# block device, 4 kB of writable layer). Attached consumers push memory higher — a
+# handful of CLI sessions took it to ~71 MB — which is what the 512m cap is for.
 #
 # Consumers — including full Nitro nodes via --node.feed.input.url — connect to
 # ws://<host>:9642 and share this one upstream connection. That matters because the
@@ -18,7 +20,16 @@
 
 services:
   relay:
-    image: offchainlabs/nitro-node:v3.11.2-3599aca
+    # The newest nitro whose source can be read: v3.11.3 is the last tagged release,
+    # and `codec.py` and the README both cite files from it. `arbos/parse_l2.go`,
+    # `util/signature/verifier.go` and `broadcastclient/broadcastclient.go` are all
+    # byte-identical to v3.11.2, so the bump changes nothing those notes rest on.
+    #
+    # Mainnet itself answers `web3_clientVersion` with v3.11.4-rc.3-7d5ac27 (2026-09-14):
+    # images exist on Docker Hub, but no such tag, release or commit exists in the nitro
+    # repo, so there is nothing to audit and no reason to follow it here. A relay only
+    # has to speak the feed protocol, which has not moved.
+    image: offchainlabs/nitro-node:v3.11.3-beb2108
     entrypoint: relay
     restart: unless-stopped
     ports:
