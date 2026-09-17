@@ -187,11 +187,12 @@ behind it can therefore skip the check. It does not, and the defaults are the re
   v.addrVerifier == nil { return nil }` — every signature is accepted, valid or forged.
 
 So `--node.feed.input.verify.accept-sequencer` is inert inside the relay binary, and the
-stock relay performs no effective verification. (Verified against Nitro v3.11.3, the
-image this repo pins; `verifier.go` is byte-identical in v3.11.2.) Tightening it is not
-a flag flip either: setting `accept-missing=false` while `accept-sequencer=true` with no
-address verifier makes `NewVerifier` fail with "cannot read batch poster addresses". A
-relay that must check has to pin `--node.feed.input.verify.allowed-addresses` instead.
+stock relay performs no effective verification. (Verified against Nitro v3.11.4, the
+image this repo pins; `verifier.go` is byte-identical in v3.11.2 and v3.11.3.) Tightening
+it is not a flag flip either: setting `accept-missing=false` while
+`accept-sequencer=true` with no address verifier makes `NewVerifier` fail with "cannot
+read batch poster addresses". A relay that must check has to pin
+`--node.feed.input.verify.allowed-addresses` instead.
 
 The relay is still the right place to fan out from, and it never *weakens* a signature —
 it copies `signatureV2` through verbatim and refuses to re-sign. End-to-end verification
