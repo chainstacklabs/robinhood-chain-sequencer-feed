@@ -46,6 +46,17 @@ services:
       - --node.feed.output.addr=0.0.0.0
       - --node.feed.input.url=wss://feed.mainnet.chain.robinhood.com
       - --chain.id=4663
+      # Both of these are already the defaults. They are spelled out because the
+      # combination is the whole reason to run a relay: it reads the compressed public
+      # feed and re-serves plain JSON, so nothing downstream needs a deflate-capable
+      # WebSocket client. Leaving them implicit hides that.
+      #
+      # Compressed upstream. Mandatory on the public feed since 2026-09-17.
+      - --node.feed.input.enable-compression=true
+      # Uncompressed downstream. Do not turn this on unless your consumers speak
+      # Nitro's dialect, which is not plain RFC 7692 — see the README. It also puts
+      # level-9 deflate on the relay's broadcast path for every message.
+      - --node.feed.output.enable-compression=false
     # The relay holds everything in memory and needs very little of it.
     mem_limit: 512m
     # The broadcaster answers a plain GET with "400 handshake error: bad Upgrade

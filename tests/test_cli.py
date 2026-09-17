@@ -183,6 +183,29 @@ def test_an_unreachable_relay_is_reported_not_swallowed(caplog):
     assert consumer.stats["reconnects"] > 0
 
 
+def test_the_connection_asks_for_compression(monkeypatch):
+    """The public feed refuses a handshake that does not offer permessage-deflate.
+
+    `websockets` offers it by default, so dropping the argument would pass every
+    test and every local run against the relay, and fail only against the real
+    feed. Pin it here so the offer is this package's decision.
+    """
+    from rhfeed import consume as consume_module
+
+    seen: list[dict] = []
+
+    def _capture(url, **kwargs):
+        seen.append(kwargs)
+        raise OSError("no feed in a test")
+
+    monkeypatch.setattr(consume_module.websockets, "connect", _capture)
+    consumer = FeedConsumer("ws://127.0.0.1:1", reconnect_delay=0.05)
+    asyncio.run(_drain(consumer, 0.3))
+
+    assert seen, "the consumer never tried to connect"
+    assert seen[0].get("compression") == "deflate"
+
+
 def test_seconds_stops_a_run_that_never_receives_anything():
     """--seconds bounds the run itself, not the gap between messages.
 

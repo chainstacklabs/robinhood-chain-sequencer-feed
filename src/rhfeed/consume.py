@@ -231,7 +231,17 @@ class FeedConsumer:
                 try:
                     _log.info("connecting to %s", self.url)
                     async with websockets.connect(
-                        self.url, additional_headers=self._headers(), max_size=2**24
+                        self.url,
+                        additional_headers=self._headers(),
+                        max_size=2**24,
+                        # Since 2026-09-17 the public feed refuses a handshake that does
+                        # not offer RFC 7692 permessage-deflate — no extension header, no
+                        # upgrade, HTTP 400. `websockets` offers it by default, so this
+                        # argument changes nothing today; it is here so the behaviour is
+                        # ours rather than a library default that a future release or a
+                        # port to another language could quietly drop. A local relay
+                        # serves uncompressed and ignores the offer.
+                        compression="deflate",
                     ) as ws:
                         if failures:
                             _log.warning("%s is reachable again", self.url)
