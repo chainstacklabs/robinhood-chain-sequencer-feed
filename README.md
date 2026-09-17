@@ -55,7 +55,8 @@ upstream is down — `docker compose logs relay` prints `Feed connected` when th
 is healthy and retries `failed connect to sequencer broadcast` when it isn't.
 
 **Why the Docker step?** That's Offchain Labs' official relay — one connection to
-Robinhood's feed, re-served to as many local consumers as you like. You want it
+Robinhood's feed, re-served to as many local consumers as you like. You want it because
+the feed is [compressed-only](#compression) and the relay hands you plain JSON, and
 because Robinhood rate-limits **per client, not per connection**, so opening five
 sockets yourself splits one client's budget five ways. It's also cheap: 23 MB of
 memory and ~1.6% of a core, nothing written to disk. It is *not* a full node.
@@ -268,6 +269,24 @@ on transactions of every type and on 143 real ones captured from mainnet:
 uv run --extra dev pytest
 uv run --extra dev python examples/bench.py --reference   # the same comparison, timed
 ```
+
+## Compression
+
+Since 2026-09-17 the feed only accepts clients that offer
+[RFC 7692](https://www.rfc-editor.org/rfc/rfc7692) permessage-deflate. Don't offer it and
+the handshake is refused — HTTP 400, no data at all. The JSON underneath is unchanged.
+
+| Reading it | What you do |
+|---|---|
+| Through the relay | Nothing. It reads the compressed feed and serves plain JSON. |
+| Direct, Python or Node | Nothing. `websockets` and `ws` offer deflate by default. |
+| Direct, Go or Rust | Set it. `gorilla/websocket` and `tungstenite` don't offer it, and it looks like the endpoint is down. |
+
+One trap if you write your own client: Nitro's broadcaster isn't standard either —
+different extension name, fixed dictionary, unreadable by ordinary libraries. Robinhood's
+endpoint *is* standard, which is the only reason direct clients work. That asymmetry is
+why Offchain Labs
+[tell non-node clients to run a relay](https://docs.arbitrum.io/run-arbitrum-node/run-feed-relay).
 
 ## Endpoints
 
