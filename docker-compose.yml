@@ -20,22 +20,17 @@
 
 services:
   relay:
-    # The newest nitro whose source can be read. v3.11.4 was tagged 2026-09-16 at commit
-    # 7d5ac27 — the same commit mainnet was answering `web3_clientVersion` with two days
-    # earlier, so what runs here is now the sequencer's own code rather than an image
-    # with nothing behind it.
+    # The build mainnet runs. The sequencer answers `web3_clientVersion` with
+    # v3.12.0-rc.3+ebe9e83-20260916T211740Z, and this image's relay reports the same
+    # commit and build stamp. Offchain Labs has published no tag or source for ebe9e83
+    # yet (checked 2026-09-25), and only the `-stripped` variants exist — the same
+    # pattern as v3.11.3, whose plain tag and source followed later.
     #
-    # Nothing the decoder or the README rests on moved across the 57 commits from
-    # v3.11.3: `arbos/parse_l2.go`, `util/signature/verifier.go`,
-    # `broadcaster/message/message.go`, `broadcastclient/broadcastclient.go`,
-    # `wsbroadcastserver/clientconnection.go` and `broadcaster/broadcaster.go` are all
-    # byte-identical between the two tags. The release is Stylus, BoLD and batch-poster
-    # work; the feed protocol is untouched.
-    #
-    # Mainnet has since moved on to v3.12.0-rc.2+19e94c6 (checked 2026-09-17), which is
-    # not public: no tag, no commit and no image anywhere. A relay only has to speak the
-    # feed protocol, so there is nothing to chase.
-    image: offchainlabs/nitro-node:v3.11.4-7d5ac27
+    # Without source, the relay's behaviour was re-checked from outside instead:
+    # `relay --help` differs from v3.11.4 only by the new `--conf.min-version` and
+    # `--conf.max-version`, every feed default is unchanged, and forged signatures,
+    # upstream drops, slow clients and resume behave as they did on v3.11.4.
+    image: offchainlabs/nitro-node:v3.12.0-ebe9e83-stripped
     entrypoint: relay
     restart: unless-stopped
     ports:
