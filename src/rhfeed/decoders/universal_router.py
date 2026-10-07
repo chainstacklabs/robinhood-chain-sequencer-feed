@@ -4,6 +4,12 @@ One byte per command, one ABI-encoded blob per command. Only the swap commands a
 read; wraps, sweeps, permits and NFT commands are skipped by position. `V4_SWAP` nests
 another (actions, params) pair with the same shape, read the same way.
 
+A `Malformed` raised while reading one command voids the whole `execute` and yields
+nothing. That matches the chain for an unflagged failing command (the router reverts the
+whole call) and errs toward silence for routers with a different command table, at the
+cost of under-reporting swaps beside an allow-revert (0x80) command that failed or beside
+an unknown layout.
+
 Constants from universal-router `Commands.sol` (main @ 543e1a19d6e21e31ced2512eec5792b50f13a0ba)
 and v4-periphery `Actions.sol` (main @ 9969eec44cfdf07e24b41de47f40276a58401976), read
 2026-10-07. The command byte is masked with 0x7f; 0x80 is the allow-revert flag.
