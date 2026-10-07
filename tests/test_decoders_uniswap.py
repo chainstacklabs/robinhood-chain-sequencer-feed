@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from eth_abi import decode as abi_decode
 
 from rhfeed.codec import selector_of
@@ -155,3 +156,130 @@ def test_captured_swap_router02_calls_match_reference():
         (blobs,) = abi_decode(["bytes[]"], tx.data[4:])
         wanted = sum(b[:4] == selector_of(f"exactInputSingle({SINGLE02})") for b in blobs)
         assert len(decode_call(call(tx.data, to=tx.to_bytes))) >= wanted
+
+
+R2 = a("0x" + "22" * 20)
+ACTOR = a("0x" + "33" * 20)
+
+
+def test_exact_output_single_router01_has_deadline_slot():
+    data = encode(
+        f"exactOutputSingle({SINGLE01})", [SINGLE01], [(WETH, MEME, 500, ME, 99, 1000, 2000, 0)]
+    )
+    (i,) = decode_call(call(data))
+    got = (i.token_in, i.token_out, i.amount_out, i.amount_in, i.recipient, i.exact_in)
+    assert got == (WETH, MEME, 1000, 2000, ME, False)
+
+
+def test_exact_input_path_router01_has_deadline_slot():
+    data = encode(f"exactInput({PATH01})", [PATH01], [(path(WETH, 10000, MEME), ME, 99, 3, 4)])
+    (i,) = decode_call(call(data))
+    got = (i.token_in, i.token_out, i.amount_in, i.amount_out, i.recipient, i.exact_in)
+    assert got == (WETH, MEME, 3, 4, ME, True)
+
+
+def test_exact_output_path_router01_has_deadline_slot():
+    data = encode(
+        f"exactOutput({PATH01})", [PATH01], [(path(MEME, 10000, WETH), ME, 99, 1000, 2000)]
+    )
+    (i,) = decode_call(call(data))
+    got = (i.token_in, i.token_out, i.amount_out, i.amount_in, i.recipient, i.exact_in)
+    assert got == (WETH, MEME, 1000, 2000, ME, False)
+
+
+TOK = ["uint256", "uint256", "address[]", "address", "uint256"]
+ETH = ["uint256", "address[]", "address", "uint256"]
+P2 = [USDG, WETH, MEME]
+# (signature, types, args, value, (token_in, token_out, amount_in, amount_out, exact_in))
+V2_CASES = [
+    (
+        "swapExactTokensForTokens(uint256,uint256,address[],address,uint256)",
+        TOK,
+        [10, 9, P2, R2, 1],
+        0,
+        (USDG, MEME, 10, 9, True),
+    ),
+    (
+        "swapExactTokensForTokensSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)",
+        TOK,
+        [10, 9, P2, R2, 1],
+        0,
+        (USDG, MEME, 10, 9, True),
+    ),
+    (
+        "swapExactTokensForETH(uint256,uint256,address[],address,uint256)",
+        TOK,
+        [10, 9, P2, R2, 1],
+        0,
+        (USDG, None, 10, 9, True),
+    ),
+    (
+        "swapExactTokensForETHSupportingFeeOnTransferTokens(uint256,uint256,address[],address,uint256)",
+        TOK,
+        [10, 9, P2, R2, 1],
+        0,
+        (USDG, None, 10, 9, True),
+    ),
+    (
+        "swapExactETHForTokens(uint256,address[],address,uint256)",
+        ETH,
+        [9, [WETH, MEME], R2, 1],
+        77,
+        (None, MEME, 77, 9, True),
+    ),
+    (
+        "swapExactETHForTokensSupportingFeeOnTransferTokens(uint256,address[],address,uint256)",
+        ETH,
+        [9, [WETH, MEME], R2, 1],
+        77,
+        (None, MEME, 77, 9, True),
+    ),
+    (
+        "swapTokensForExactTokens(uint256,uint256,address[],address,uint256)",
+        TOK,
+        [5, 6, P2, R2, 1],
+        0,
+        (USDG, MEME, 6, 5, False),
+    ),
+    (
+        "swapTokensForExactETH(uint256,uint256,address[],address,uint256)",
+        TOK,
+        [5, 6, P2, R2, 1],
+        0,
+        (USDG, None, 6, 5, False),
+    ),
+    (
+        "swapETHForExactTokens(uint256,address[],address,uint256)",
+        ETH,
+        [5, [WETH, MEME], R2, 1],
+        77,
+        (None, MEME, 77, 5, False),
+    ),
+]
+
+
+@pytest.mark.parametrize(("sig", "types", "args", "value", "want"), V2_CASES)
+def test_v2_every_signature(sig, types, args, value, want):
+    (i,) = decode_call(call(encode(sig, types, args), value=value))
+    assert (i.token_in, i.token_out, i.amount_in, i.amount_out, i.exact_in) == want
+    assert i.recipient == R2
+
+
+@pytest.mark.parametrize("sig", ["multicall(bytes[])", "multicall(bytes32,bytes[])"])
+def test_multicall_other_variants(sig):
+    single = encode(f"exactInputSingle({SINGLE02})", [SINGLE02], [(WETH, MEME, 10000, ME, 1, 2, 0)])
+    if sig == "multicall(bytes[])":
+        data = encode(sig, ["bytes[]"], [[single, single]])
+    else:
+        data = encode(sig, ["bytes32", "bytes[]"], [b"\x01" * 32, [single, single]])
+    out = decode_call(call(data))
+    assert len(out) == 2 and all(i.via == (ROUTER,) and i.kind == "swap" for i in out)
+
+
+def test_multicall_passes_value_and_actor_through():
+    sig = "swapExactETHForTokens(uint256,address[],address,uint256)"
+    inner = encode(sig, ETH, [9, [WETH, MEME], ME, 1])
+    data = encode("multicall(bytes[])", ["bytes[]"], [[inner]])
+    outer = Call(ROUTER, 10**18, data, ACTOR, (ROUTER,))
+    (i,) = decode_call(outer)
+    assert (i.actor, i.via, i.amount_in, i.token_in) == (ACTOR, (ROUTER,), 10**18, None)
