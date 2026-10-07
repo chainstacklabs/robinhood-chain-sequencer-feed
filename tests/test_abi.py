@@ -53,7 +53,14 @@ def test_dynamic_bytes():
 
 def test_dynamic_offset_past_end_is_malformed():
     data = bytearray(encode(["bytes"], [b"x"]))
-    data[31] = 0xFF  # offset now points far past the payload
+    data[0:32] = (1024).to_bytes(32, "big")  # aligned offset past the payload
+    with pytest.raises(Malformed):
+        dynamic(bytes(data), 0)
+
+
+def test_dynamic_misaligned_offset_is_malformed():
+    data = bytearray(encode(["bytes"], [b"x"]))
+    data[31] = 0x21  # misaligned offset (not a multiple of 32)
     with pytest.raises(Malformed):
         dynamic(bytes(data), 0)
 
