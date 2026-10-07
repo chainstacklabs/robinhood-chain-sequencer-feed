@@ -59,6 +59,8 @@ class Intent:
       relay_fill  solver delivers token_out to recipient (= actor); payer is the solver treasury
       relay_sell  actor sells token_in; token_out goes to Relay as credit, paid out elsewhere
 
+    `actor` is what the calldata claims; a receipt confirms it.
+
     `amount_in` is exact and `amount_out` a minimum when `exact_in`; the other way round
     otherwise. A token of None is native ETH.
     """
