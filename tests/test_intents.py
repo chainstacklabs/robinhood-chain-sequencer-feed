@@ -158,3 +158,14 @@ def test_a_deploy_is_nothing():
         deploy = _signed("deploy", value=value)
         assert deploy.to_bytes is None
         assert decode_intents(deploy) == []
+
+
+def test_decodes_accepts_a_raw_selector(scratch_registry):
+    @decodes("0xdeadbeef")
+    def raw(call, depth):
+        return []
+
+    assert DECODERS[bytes.fromhex("deadbeef")] is raw
+    with pytest.raises(ValueError, match="already registered"):
+        decodes("0xdeadbeef")(lambda call, depth: [])
+    decodes("0xdeadbeef")(raw)

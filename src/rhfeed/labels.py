@@ -24,6 +24,7 @@ LABELS: dict[bytes, str] = {
     addr("0xcaf681a66d020601342297493863e78c959e5cb2"): "swap_router02",
     addr("0x73991a25c818bf1f1128deaab1492d45638de0d3"): "v3_position_manager",
     addr("0x8366a39CC670B4001A1121B8F6A443A643e40951"): "v4_pool_manager",
+    addr("0x1cbaF24D53fe930fCe8EFF149fA797D2611Da149"): "pons",
     addr("0x000000000022D473030F116dDEE9F6B43aC78BA3"): "permit2",
     addr("0x65050a9b7e5075a2ba5ced7b1b64ee66262c40dc"): "steps_router",
     addr("0xe492912f37c2a4eca45d42dc67548f4c6cd7ce2b"): "steps_router",

@@ -147,6 +147,7 @@ claims it; the receipt confirms it, see below.
 | Uniswap V3 router `exactInput*`, `exactOutput*`; V2 router `swap*`; `multicall` | swap |
 | Universal Router `execute`: V2, V3 and V4 swap commands | swap |
 | `swap(steps[])` aggregator (contracts `0x65050a…`, `0xe49291…`, `0x5b8d85…`) | swap |
+| Pons launchpad buy (`0xc1120e3d`) | swap |
 | 0x AllowanceHolder `exec` → Settler slippage tuple | swap |
 | ERC-4337 v0.7/v0.8 `handleOps` → `execute` / `executeBatch` | whatever the wallet called, with the wallet as `actor` |
 | Relay router `permit2TransferAndMulticall`, `transferAndMulticall` | relay_fill, relay_sell |

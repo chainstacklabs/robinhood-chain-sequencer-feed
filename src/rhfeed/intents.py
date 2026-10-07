@@ -22,12 +22,13 @@ module there, imported from `decoders/__init__.py`.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .abi import Malformed
-from .codec import Tx, checksum, selector_of
+from .codec import Tx, checksum, sel, selector_of
 
 #: Containers nest: handleOps -> executeBatch -> Relay router -> AllowanceHolder -> Settler
 #: is five deep on mainnet today. Eight leaves room and still stops a payload that nests
@@ -87,6 +88,8 @@ class Intent:
         return d
 
 
+RAW_SELECTOR = re.compile(r"0x[0-9a-fA-F]{8}")
+
 Decoder = Callable[[Call, int], list[Intent]]
 
 #: selector -> decoder. Populated by `decodes` when `rhfeed.decoders` is imported.
@@ -94,11 +97,18 @@ DECODERS: dict[bytes, Decoder] = {}
 
 
 def decodes(*signatures: str) -> Callable[[Decoder], Decoder]:
-    """Register a decoder under each signature. Signatures, not hex, so a typo fails loudly."""
+    """Register a decoder under each signature. Signatures, not hex, so a typo fails loudly.
+
+    The exception is a raw selector (`0x` and 8 hex digits), for functions whose ABI is
+    unknown and whose layout was read from receipts. Such a decoder must check the shape
+    of its own calldata, because the selector alone could belong to any contract.
+    """
 
     def register(fn: Decoder) -> Decoder:
         for signature in signatures:
-            selector = selector_of(signature)
+            selector = (
+                sel(signature) if RAW_SELECTOR.fullmatch(signature) else selector_of(signature)
+            )
             if DECODERS.get(selector, fn) is not fn:
                 raise ValueError(f"{signature!r} is already registered")
             DECODERS[selector] = fn
