@@ -73,7 +73,7 @@ Two things a relay does not give you, so you know what you're trading:
 
 ## Filter it
 
-There is one command and seven flags.
+There is one command and eight flags.
 
 ```bash
 # ERC-20 approvals only
@@ -89,7 +89,7 @@ uv run rhfeed --feed mainnet    # skip the relay, straight at the public endpoin
 uv run rhfeed --verify          # drop anything not signed by the sequencer key
 ```
 
-`--to`, `--selector` and `--sender` can each be repeated, and they combine.
+`--to`, `--selector`, `--sender` and `--actor` can each be repeated, and they combine.
 
 `--verify` checks the signature every message carries and drops the ones that fail,
 reporting the count in the summary line even when it is zero. It costs one signature
@@ -111,6 +111,44 @@ check before you take one from there or from the example above.
 
 Done looking? `docker compose down` stops the relay — it is set to restart with
 Docker otherwise.
+
+## Decode it
+
+A selector says which function. The arguments say what the trade is. `rhfeed` reads
+the arguments for the functions that carry this chain's trading and prints one line per
+intent under the transaction:
+
+```
+seq 20543508  1 tx
+    0x28e8a4cc79ed77552e14e8e987ad36bd49c3f40d36409f653377fa2c1576e834  call     0x4337084D9E…  0x765e827f
+        ↳ relay_sell    in 0x69984ad3… 1588651804434692220595  out USDG  via entrypoint_v08 > 0x9b5e82e3… > relay_router
+```
+
+That transaction was sent by a bundler. The wallet selling is `0x9b5e82e3…`, found inside
+the bundle — which is why there is `--actor`:
+
+```bash
+uv run rhfeed --actor 0x9b5e82e3bcde529bbfba26e0b9e7044cef866a79   # this wallet's trades, both legs
+uv run rhfeed --json | jq '.txs[].intents[]'                       # the same, machine-readable
+```
+
+A FOMO buy is filled by a Relay solver and names the wallet only as the recipient;
+`--actor` matches that too, so one filter follows a wallet through both halves of its
+trading.
+
+| Decoded | Yields |
+|---|---|
+| ERC-20 `transfer`, `transferFrom`, `approve`; Permit2 `approve` | transfer, approve |
+| Uniswap V3 router `exactInput*`, `exactOutput*`; V2 router `swap*`; `multicall` | swap |
+| Universal Router `execute`: V2, V3 and V4 swap commands | swap |
+| `swap(steps[])` aggregator (`0x65050a…`, `0xe4929…`, `0x5b8d85…`) | swap |
+| 0x AllowanceHolder `exec` → Settler slippage tuple | swap |
+| ERC-4337 v0.7/v0.8 `handleOps` → `execute` / `executeBatch` | whatever the wallet called, with the wallet as `actor` |
+| Relay router `permit2TransferAndMulticall`, `transferAndMulticall` | relay_fill, relay_sell |
+
+Anything else yields nothing and is shown as it is today. Amounts are raw integers:
+the feed carries no decimals, a node does. Nothing here is an outcome — see
+[Read this before you trade on it](#read-this-before-you-trade-on-it).
 
 ## Use it from Python
 

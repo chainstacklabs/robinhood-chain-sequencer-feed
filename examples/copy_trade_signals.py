@@ -8,14 +8,14 @@ size it, alert on it, ignore it — is yours to write. Two things it will not do
 you are pretending a signal is settled and pretending it cannot be censored; both
 are explained at the bottom of this file and in the README.
 
-**The cost of following by sender.** Matching on the sender means recovering it,
-and recovery is ~95% of what decoding a transaction costs (~46 us against ~2 us for
-the fields). There is no way around that if your follow set is arbitrary wallets:
-you recover every transaction to find out whose it is. At Robinhood Chain's current
-rate that is a few percent of one core, so it is affordable — but if you only care
-about wallets trading through known contracts, set WATCH_CONTRACTS below. Comparing
-`to` first is a set lookup on bytes the decoder already has, and it drops most of
-the stream before any ECDSA happens.
+**The cost of following a wallet.** Matching on `intent.actor` is a set lookup for
+bundled and Relay trades: the decoder has already pulled the wallet out of the
+calldata. For a plain EOA trade there is no actor in the calldata, so the sender has to
+be recovered, and recovery is ~95% of what decoding a transaction costs (~46 us against
+~2 us for the fields). At Robinhood Chain's current rate that is a few percent of one
+core, so it is affordable — but if you only care about wallets trading through known
+contracts, set WATCH_CONTRACTS below. Comparing `to` first is a set lookup on bytes the
+decoder already has, and it drops most of the stream before any ECDSA happens.
 """
 
 from __future__ import annotations
@@ -25,24 +25,12 @@ import json
 import sys
 import time
 
-from rhfeed import FeedConsumer, addr, selector_of
+from rhfeed import FeedConsumer, addr, decode_intents
 
-# Optional cheap prefilter. Empty means "recover every sender", which is correct for
-# an arbitrary follow set and costs about 20x more per transaction.
+# Optional cheap prefilter. Empty means "decode every transaction", which is correct for
+# an arbitrary follow set; plain EOA trades then cost a sender recovery each.
 WATCH_CONTRACTS: set[bytes] = set()
 # e.g. {addr("0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec")}   # NVDA
-
-# Selectors worth naming in the output. Anything else still emits, with a raw selector.
-KNOWN = {
-    selector_of("transfer(address,uint256)"): "transfer",
-    selector_of("transferFrom(address,address,uint256)"): "transferFrom",
-    selector_of("approve(address,uint256)"): "approve",
-    selector_of("swapExactTokensForTokens(uint256,uint256,address[],address,uint256)"): "swap",
-    selector_of(
-        "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))"
-    ): "swapV3",
-    selector_of("multicall(uint256,bytes[])"): "multicall",
-}
 
 
 async def main(follow: set[bytes]) -> None:
@@ -55,32 +43,29 @@ async def main(follow: set[bytes]) -> None:
             # Cheap gate first: raw bytes the decoder already sliced out.
             if WATCH_CONTRACTS and tx.to_bytes not in WATCH_CONTRACTS:
                 continue
-            # Expensive gate second, on whatever survived.
-            sender = tx.sender_bytes
-            if sender not in follow:
-                continue
+            for intent in decode_intents(tx):
+                # The wallet the trade is for. Only when calldata names none do we
+                # pay for sender recovery.
+                actor = intent.actor if intent.actor is not None else tx.sender_bytes
+                if actor not in follow:
+                    continue
 
-            seen += 1
-            print(
-                json.dumps(
-                    {
-                        "signal": "followed_wallet_tx",
-                        "block": msg.seq,  # sequence number == L2 block number
-                        "sequencer_time": msg.timestamp,
-                        "seen_at": round(msg.received_at, 3),
-                        "hash": tx.hash,
-                        "from": tx.sender,
-                        "to": tx.to,
-                        "action": KNOWN.get(tx.selector, tx.selector_hex),
-                        "value_wei": tx.value,
-                        "nonce": tx.nonce,
-                        "gas": tx.gas,
-                        # Soft confirmation. Not a fill, not a receipt, not final.
-                        "status": "soft_confirmed",
-                    }
-                ),
-                flush=True,
-            )
+                seen += 1
+                print(
+                    json.dumps(
+                        {
+                            "signal": "followed_wallet_tx",
+                            "block": msg.seq,  # sequence number == L2 block number
+                            "sequencer_time": msg.timestamp,
+                            "seen_at": round(msg.received_at, 3),
+                            "hash": tx.hash,
+                            "intent": intent.as_dict(),
+                            # Soft confirmation. Not a fill, not a receipt, not final.
+                            "status": "soft_confirmed",
+                        }
+                    ),
+                    flush=True,
+                )
 
     print(f"# {seen} signals in {time.time() - started:.0f}s", file=sys.stderr)
 
