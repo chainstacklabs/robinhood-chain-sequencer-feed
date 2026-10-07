@@ -106,9 +106,12 @@ def decodes(*signatures: str) -> Callable[[Decoder], Decoder]:
 
     def register(fn: Decoder) -> Decoder:
         for signature in signatures:
-            selector = (
-                sel(signature) if RAW_SELECTOR.fullmatch(signature) else selector_of(signature)
-            )
+            if RAW_SELECTOR.fullmatch(signature):
+                selector = sel(signature)
+            elif signature[:2] in ("0x", "0X") and "(" not in signature:
+                raise ValueError(f"{signature!r} is neither a signature nor a 4-byte selector")
+            else:
+                selector = selector_of(signature)
             if DECODERS.get(selector, fn) is not fn:
                 raise ValueError(f"{signature!r} is already registered")
             DECODERS[selector] = fn

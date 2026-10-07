@@ -169,3 +169,17 @@ def test_decodes_accepts_a_raw_selector(scratch_registry):
     with pytest.raises(ValueError, match="already registered"):
         decodes("0xdeadbeef")(lambda call, depth: [])
     decodes("0xdeadbeef")(raw)
+
+
+def test_decodes_refuses_a_hex_string_that_is_not_a_selector(scratch_registry):
+    before = dict(DECODERS)
+    for bad in ("0xc1120e3", "0Xc1120e3d", "0xc1120e3d00"):
+        with pytest.raises(ValueError, match="neither a signature nor a 4-byte selector"):
+            decodes(bad)(lambda call, depth: [])
+    assert before == DECODERS
+
+    @decodes("fine(uint256)")
+    def fine(call, depth):
+        return []
+
+    assert DECODERS[selector_of("fine(uint256)")] is fine
