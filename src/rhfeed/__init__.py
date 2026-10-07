@@ -1,5 +1,6 @@
 """Decode an Arbitrum Orbit sequencer feed, fast enough to act on it."""
 
+from . import decoders  # noqa: F401
 from .codec import (
     FeedMessage,
     Tx,

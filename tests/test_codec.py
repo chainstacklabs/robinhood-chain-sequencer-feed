@@ -367,3 +367,12 @@ def test_only_l2_message_kind_payloads_decode(kind):
     l2_msg = _signed_l2_msg(5)
     assert [t.nonce for t in parse_frame(_frame(3, l2_msg))[0].txs] == [5]
     assert parse_frame(_frame(kind, l2_msg))[0].txs == []
+
+
+def test_data_is_the_calldata(signed):
+    name, raw = signed
+    assert decode_transaction(bytes(raw)).data == TEMPLATES[name]["data"]
+
+
+def test_data_is_empty_for_an_unknown_envelope():
+    assert decode_transaction(bytes([0x05]) + b"\x00" * 10).data == b""
