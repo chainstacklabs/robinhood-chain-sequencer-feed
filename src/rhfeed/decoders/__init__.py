@@ -5,4 +5,5 @@ from . import (
     steps_router,  # noqa: F401
     uniswap,  # noqa: F401
     universal_router,  # noqa: F401
+    zerox,  # noqa: F401
 )
