@@ -57,8 +57,9 @@ class Filter:
     """The filters, applied cheapest first.
 
     `to` and `selector` are compared as raw bytes against fields the decoder has
-    already sliced out, so they cost a set lookup. `sender` triggers ECDSA recovery
-    and is therefore checked last, on whatever survived the others.
+    already sliced out, so they cost a set lookup. Then the calldata is decoded for
+    `actor`, and `sender` goes last because it triggers ECDSA recovery. `actor`
+    recovers the sender only when no intent names an actor.
     """
 
     def __init__(self, args: argparse.Namespace) -> None:
@@ -247,7 +248,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--actor",
         action="append",
         help="only transactions whose decoded intent is for this wallet (the user inside a "
-        "4337 bundle or the wallet a Relay fill delivers to) or that it sent. Shows senders",
+        "4337 bundle or the wallet a Relay fill delivers to) or, when the calldata names no "
+        "one, that it sent. Shows senders",
     )
     return ap
 

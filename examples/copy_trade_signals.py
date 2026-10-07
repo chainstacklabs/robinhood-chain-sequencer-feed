@@ -14,7 +14,8 @@ bundled and Relay trades: the decoder has already pulled the wallet out of the
 calldata. Recovery happens only for recognised trades whose intent names no actor (a
 plain EOA trade), and recovery is ~95% of what decoding a transaction costs (~46 us against
 ~2 us for the fields). At Robinhood Chain's current rate that is a few percent of one
-core, so it is affordable. WATCH_CONTRACTS below filters on the transaction's `to`: right
+core, so it is affordable. Emitting `sender` in the signal costs one recovery per emitted
+signal, whatever the actor. WATCH_CONTRACTS below filters on the transaction's `to`: right
 for plain EOA trades through a known router, wrong for 4337 bundles and Relay fills,
 where `to` is the EntryPoint or the Relay router, never the token.
 """

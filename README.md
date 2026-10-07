@@ -124,7 +124,7 @@ uv run rhfeed --actor 0x9b5e82e3bcde529bbfba26e0b9e7044cef866a79
 
 ```
 seq 20543508  1 tx
-    0x28e8a4cc79ed77552e14e8e987ad36bd49c3f40d36409f653377fa2c1576e834  call     0x4337084D9E…  0x765e827f
+    0x28e8a4cc79ed77552e14e8e987ad36bd49c3f40d36409f653377fa2c1576e834  call     0x4337026D73… -> 0x4337084D9E…  0x765e827f
         ↳ relay_sell    in 0x69984ad3… 1588651804434692220595  out USDG  via entrypoint_v08 > 0x9b5e82e3… > relay_router
 ```
 
@@ -136,9 +136,10 @@ uv run rhfeed --actor 0x9b5e82e3bcde529bbfba26e0b9e7044cef866a79   # this wallet
 uv run rhfeed --json | jq '.txs[].intents[]'                       # the same, machine-readable
 ```
 
-A FOMO buy is filled by a Relay (the cross-chain protocol, not the feed relay) solver and names the wallet only as the recipient;
-`--actor` matches that too, so one filter follows a wallet through both halves of its
-trading — as the calldata claims it; the receipt confirms it, see below.
+A FOMO buy is filled by a solver of Relay — the cross-chain protocol, not the feed
+relay you run — and names the wallet only as the recipient; `--actor` matches that too,
+so one filter follows a wallet through both halves of its trading — as the calldata
+claims it; the receipt confirms it, see below.
 
 | Decoded | Yields |
 |---|---|
