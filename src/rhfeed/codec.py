@@ -49,6 +49,13 @@ L1_KIND = {
     0xFF: "Invalid",
 }
 
+# The only L1 kind whose l2Msg is an L2 message. arbos/parse_l2.go switches on the
+# header kind before it reads a byte of the payload; every other kind has its own
+# layout. An EthDeposit is a 20-byte address then a 32-byte amount, so an address
+# starting 0x04 would read as an L2 SignedTx and decode into a transaction that
+# does not exist.
+L1_L2_MESSAGE = 3
+
 # arbos/parse_l2.go: L2 message kinds. Only 3 (Batch) and 4 (SignedTx) carry the
 # user transactions a consumer cares about.
 L2_BATCH = 3
@@ -506,7 +513,7 @@ class FeedMessage:
     @property
     def from_parent_chain(self) -> bool:
         """Anything not an L2Message entered through Ethereum, not the sequencer."""
-        return self.l1_kind != 3
+        return self.l1_kind != L1_L2_MESSAGE
 
     def __repr__(self) -> str:
         return f"<FeedMessage seq={self.seq} txs={len(self.txs)}>"
@@ -523,14 +530,17 @@ def parse_frame(frame: dict[str, Any], decode_txs: bool = True) -> list[FeedMess
         wrapper = entry.get("message") or {}
         incoming = wrapper.get("message") or {}
         header = incoming.get("header") or {}
+        l1_kind = header.get("kind", -1)
         l2_msg = incoming.get("l2Msg")
+        if not (decode_txs and l1_kind == L1_L2_MESSAGE):
+            l2_msg = None
         out.append(
             FeedMessage(
                 seq=entry.get("sequenceNumber", -1),
-                l1_kind=header.get("kind", -1),
+                l1_kind=l1_kind,
                 l1_sender=header.get("sender"),
                 timestamp=header.get("timestamp", 0),
-                txs=decode_l2_message(base64.b64decode(l2_msg)) if (l2_msg and decode_txs) else [],
+                txs=decode_l2_message(base64.b64decode(l2_msg)) if l2_msg else [],
                 block_hash=entry.get("blockHash"),
                 delayed_messages_read=wrapper.get("delayedMessagesRead") or 0,
                 l1_block_number=header.get("blockNumber") or 0,

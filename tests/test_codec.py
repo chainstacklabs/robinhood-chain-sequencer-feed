@@ -330,3 +330,40 @@ def test_backlog_skipping_leaves_transactions_undecoded():
     }
     assert parse_frame(frame, decode_txs=False)[0].txs == []
     assert parse_frame(frame, decode_txs=True)[0].seq == 1
+
+
+def _frame(kind: int, l2_msg: bytes) -> dict:
+    return {
+        "messages": [
+            {
+                "sequenceNumber": 1,
+                "message": {
+                    "message": {
+                        "header": {"kind": kind, "timestamp": 1},
+                        "l2Msg": base64.b64encode(l2_msg).decode(),
+                    }
+                },
+            }
+        ]
+    }
+
+
+def test_eth_deposit_to_an_0x04_address_is_not_a_transaction():
+    # Mainnet block 80142686: 0.0499 ETH deposited from Ethereum (inbox message
+    # 349823) to an address whose first byte reads as an L2 SignedTx kind. The node
+    # has one deposit tx (0x64) in that block; reading the payload as an L2 message
+    # invents a transaction with a hash that does not exist on chain.
+    to = bytes.fromhex("041e96cae27bd89ffdfc2e6b67c56483a883389e")
+    amount = (49888441303944521).to_bytes(32, "big")
+    (msg,) = parse_frame(_frame(12, to + amount))
+    assert msg.l1_kind_name == "EthDeposit"
+    assert msg.txs == []
+
+
+@pytest.mark.parametrize("kind", [7, 9, 12, 13, -1])
+def test_only_l2_message_kind_payloads_decode(kind):
+    # A signed transaction is decoded under kind 3 and nowhere else, which is the
+    # order arbos/parse_l2.go reads them in: header kind first, payload second.
+    l2_msg = _signed_l2_msg(5)
+    assert [t.nonce for t in parse_frame(_frame(3, l2_msg))[0].txs] == [5]
+    assert parse_frame(_frame(kind, l2_msg))[0].txs == []
