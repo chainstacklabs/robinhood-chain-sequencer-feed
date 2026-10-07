@@ -128,3 +128,33 @@ def test_decodes_refuses_to_shadow_a_registered_selector(scratch_registry):
         decodes("dup(uint256)")(second)
     assert DECODERS[selector_of("dup(uint256)")] is first
     decodes("dup(uint256)")(first)
+
+
+def _signed(template="eip1559", **overrides):
+    from eth_account import Account
+
+    from rhfeed.codec import decode_transaction
+
+    from .test_codec import KEY, TEMPLATES
+
+    fields = {**TEMPLATES[template], **overrides}
+    return decode_transaction(bytes(Account.from_key(KEY).sign_transaction(fields).raw_transaction))
+
+
+def test_plain_eth_transfer_is_a_transfer_intent():
+    tx = _signed()
+    assert tx.data == b"" and tx.value == 42
+    (i,) = decode_intents(tx)
+    assert (i.kind, i.actor, i.via) == ("transfer", None, (tx.to_bytes,))
+    assert (i.token_in, i.amount_in, i.recipient) == (None, 42, tx.to_bytes)
+
+
+def test_empty_call_with_no_value_is_nothing():
+    assert decode_intents(_signed(value=0)) == []
+
+
+def test_a_deploy_is_nothing():
+    for value in (0, 5):
+        deploy = _signed("deploy", value=value)
+        assert deploy.to_bytes is None
+        assert decode_intents(deploy) == []

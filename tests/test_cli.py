@@ -325,3 +325,11 @@ def test_tx_json_carries_intents():
     obj = tx_json(tx, decode_intents(tx), show_sender=False)
     assert obj["hash"] == tx.hash and obj["intents"][0]["kind"] == "approve"
     assert "sender" not in obj
+
+
+def test_describe_a_plain_eth_transfer():
+    from rhfeed.intents import Intent
+
+    to = addr("0x" + "22" * 20)
+    line = describe(Intent("transfer", None, (to,), token_in=None, amount_in=42, recipient=to))
+    assert "in ETH 42" in line

@@ -54,7 +54,8 @@ class Intent:
 
     Field meaning by kind:
       swap        token_in/amount_in sold, token_out/amount_out bought, recipient gets output
-      transfer    token_in/amount_in moved to recipient; payer set when it is not the actor
+      transfer    token_in/amount_in moved to recipient; payer set when it is not the actor.
+                  A plain ETH transfer (empty calldata, value > 0) is a transfer with token_in=None.
       approve     token_in approved to recipient for amount_in
       relay_fill  solver delivers token_out to recipient (= actor); payer is the solver treasury
       relay_sell  actor sells token_in; token_out goes to Relay as credit, paid out elsewhere
@@ -130,5 +131,17 @@ def decode_call(call: Call, depth: int = 0) -> list[Intent]:
 
 def decode_intents(tx: Tx) -> list[Intent]:
     """Every intent in one transaction. Cheap to call on a transaction with no match."""
+    if tx.to_bytes is not None and not tx.data and tx.value > 0:
+        # No calldata, so no selector to dispatch on: a plain ETH transfer.
+        return [
+            Intent(
+                "transfer",
+                None,
+                (tx.to_bytes,),
+                token_in=None,
+                amount_in=tx.value,
+                recipient=tx.to_bytes,
+            )
+        ]
     via = (tx.to_bytes,) if tx.to_bytes is not None else ()
     return decode_call(Call(tx.to_bytes, tx.value, tx.data, None, via))
