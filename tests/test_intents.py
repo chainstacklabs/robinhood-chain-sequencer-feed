@@ -106,3 +106,11 @@ def test_intent_as_dict_is_json_ready():
     d = i.as_dict()
     assert d["actor"].startswith("0x") and d["token_in"] is None and d["via"] == [d["token_out"]]
     assert d["amount_in"] == 1 and d["exact_in"] is True
+
+
+def test_labels_name_known_contracts_and_shorten_the_rest():
+    from rhfeed.labels import label
+
+    assert label(a("0x4337084d9e255ff0702461cf8895ce9e3b5ff108")) == "entrypoint_v08"
+    assert label(a("0xccc88a9d1b4ed6b0eaba998850414b24f1c315be")) == "relay_router"
+    assert label(a("0x" + "ab" * 20)) == "0xabababab…"
