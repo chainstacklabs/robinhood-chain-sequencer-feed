@@ -189,11 +189,10 @@ behind it can therefore skip the check. It does not, and the defaults are the re
 
 So `--node.feed.input.verify.accept-sequencer` is inert inside the relay binary, and the
 stock relay performs no effective verification. (Read in the v3.11.4 source;
-`verifier.go` is byte-identical across v3.11.2, v3.11.3 and v3.11.4. The v3.12.0 image
-this repo pins has no public source yet, so it was checked from outside: it forwards
-messages with a wrong or missing signature exactly as v3.11.4 does.) Tightening it is not
-a flag flip either: setting `accept-missing=false` while `accept-sequencer=true` with no
-address verifier makes `NewVerifier` fail with "cannot read batch poster addresses". A
+`verifier.go` is byte-identical from v3.11.2 through v3.12.1, the version this repo
+pins, and `relay.go` still passes `nil`.) Tightening it is not a flag flip either:
+setting `accept-missing=false` while `accept-sequencer=true` with no address verifier
+makes `NewVerifier` fail with "cannot read batch poster addresses". A
 relay that must check has to pin `--node.feed.input.verify.allowed-addresses` instead.
 
 The relay is still the right place to fan out from, and it never *weakens* a signature —
