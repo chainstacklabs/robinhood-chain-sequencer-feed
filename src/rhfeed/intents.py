@@ -97,7 +97,10 @@ def decodes(*signatures: str) -> Callable[[Decoder], Decoder]:
 
     def register(fn: Decoder) -> Decoder:
         for signature in signatures:
-            DECODERS[selector_of(signature)] = fn
+            selector = selector_of(signature)
+            if DECODERS.get(selector, fn) is not fn:
+                raise ValueError(f"{signature!r} is already registered")
+            DECODERS[selector] = fn
         return fn
 
     return register

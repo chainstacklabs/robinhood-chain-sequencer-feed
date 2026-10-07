@@ -100,8 +100,8 @@ def test_malformed_settler_selector_only():
 def test_malformed_settler_truncated_tuple():
     """Settler data is selector plus two words only (tuple short of third slot)."""
     # Create settler data with selector + 2 words (recipient, token) but no amount
-    # Selector + 2 addresses = 4 + 32 + 32 = 68 bytes (missing the amount)
-    settler_data = selector_of(SETTLE) + ME + MEME
+    # Selector + 2 padded words = 4 + 32 + 32 = 68 bytes (missing the amount)
+    settler_data = selector_of(SETTLE) + ME.rjust(32, b"\x00") + MEME.rjust(32, b"\x00")
     data = encode(
         "exec(address,address,uint256,address,bytes)",
         EXEC,

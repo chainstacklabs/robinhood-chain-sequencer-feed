@@ -114,3 +114,17 @@ def test_labels_name_known_contracts_and_shorten_the_rest():
     assert label(a("0x4337084d9e255ff0702461cf8895ce9e3b5ff108")) == "entrypoint_v08"
     assert label(a("0xccc88a9d1b4ed6b0eaba998850414b24f1c315be")) == "relay_router"
     assert label(a("0x" + "ab" * 20)) == "0xabababab…"
+
+
+def test_decodes_refuses_to_shadow_a_registered_selector(scratch_registry):
+    @decodes("dup(uint256)")
+    def first(call, depth):
+        return []
+
+    def second(call, depth):
+        return []
+
+    with pytest.raises(ValueError, match="already registered"):
+        decodes("dup(uint256)")(second)
+    assert DECODERS[selector_of("dup(uint256)")] is first
+    decodes("dup(uint256)")(first)

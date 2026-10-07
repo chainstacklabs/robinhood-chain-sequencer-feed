@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
 from eth_abi import decode as abi_decode
 
+from rhfeed.abi import Malformed
+from rhfeed.decoders.erc4337 import execute_batch_parallel
 from rhfeed.intents import MAX_DEPTH, Call, decode_call
 
 from .helpers import a, by_selector, encode
@@ -89,3 +92,40 @@ def test_captured_fomo_bundle_names_the_wallet():
         senders = {a(o[0]) for o in ops}
         assert out and {i.actor for i in out} <= senders
         assert all(i.via[:2] == (tx.to_bytes, i.actor) for i in out)
+
+
+BATCH3 = "executeBatch(address[],uint256[],bytes[])"
+BATCH2 = "executeBatch(address[],bytes[])"
+
+
+def test_parallel_array_batch_yields_in_order_with_values():
+    sig = "swapExactETHForTokens(uint256,address[],address,uint256)"
+    swap = encode(
+        sig, ["uint256", "address[]", "address", "uint256"], [1, [TOKEN, SPENDER], WALLET_A, 1]
+    )
+    batch = encode(
+        BATCH3,
+        ["address[]", "uint256[]", "bytes[]"],
+        [[TOKEN, SPENDER, TOKEN], [0, 10**18, 0], [approve(1), swap, approve(2)]],
+    )
+    out = decode_call(bundle([op(WALLET_A, batch)]))
+    assert [i.amount_in for i in out] == [1, 10**18, 2]
+    assert all(i.actor == WALLET_A for i in out)
+
+
+def test_two_array_batch_has_no_values():
+    batch = encode(BATCH2, ["address[]", "bytes[]"], [[TOKEN, TOKEN], [approve(1), approve(2)]])
+    out = decode_call(bundle([op(WALLET_A, batch)]))
+    assert [i.amount_in for i in out] == [1, 2] and all(i.actor == WALLET_A for i in out)
+
+
+def test_mismatched_parallel_arrays_are_malformed():
+    batch = encode(
+        BATCH3,
+        ["address[]", "uint256[]", "bytes[]"],
+        [[TOKEN, TOKEN], [0], [approve(1), approve(2)]],
+    )
+    call = Call(WALLET_A, 0, batch, WALLET_A, (WALLET_A,))
+    with pytest.raises(Malformed):
+        execute_batch_parallel(call, 0)
+    assert decode_call(call) == []
