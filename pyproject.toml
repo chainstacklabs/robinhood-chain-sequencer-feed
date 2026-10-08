@@ -32,6 +32,10 @@ dev = [
     "eth-abi>=5",
     "ruff==0.16.7",
 ]
+# examples/local_execution only: an embedded EVM to execute feed blocks on the laptop.
+exec = [
+    "pyrevm>=0.3.7",
+]
 
 [project.scripts]
 rhfeed = "rhfeed.cli:main"
