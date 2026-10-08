@@ -12,111 +12,93 @@
   • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
 </p>
 
-# See Robinhood Chain transactions before any RPC will show them
+# Robinhood Chain sequencer feed decoder
 
-> **Experimental.** A reference implementation, not for production use.
+> **Experimental.** A demo. Do not use it in production.
 
-Robinhood Chain has **no public mempool**. A transaction is invisible until
-Robinhood's sequencer decides its order — and the sequencer announces that decision
-on one WebSocket, carrying the ordering and the calldata but no result. Everything
-else (RPC, explorers, indexers) has to re-execute the block before it can tell you
-what happened, so it finds out later.
+Robinhood Chain has no public mempool. The sequencer publishes each block on a WebSocket feed.
+A feed message contains the transaction order and the calldata. It does not contain receipts.
 
-This repo turns that WebSocket into structured data:
+This repo shows how to:
 
-```
-seq 20555512  2 tx
-    0xb7ef877253db5328f1e53b12afd6ca144186e69b7e7ab28b7886bbbf36870aeb  call  0xb02aD7d2C0  0xb6621842
-    0xe8867c10f4d1deb07aa266220c39705969008c8caa4b04b2627a8051385ac8cc  call  0x50B98EcdE3  0x00000000
-```
+1. Connect to the feed.
+2. Decode the transactions and the calldata of known trade functions.
+3. Execute feed blocks in a local EVM. See [`examples/local_execution/`](examples/local_execution/).
 
-Copy-trading, liquidation alerts, flow analytics — that's yours to build. This is
-the part underneath it: get the data, decode it fast, hand it over.
+## Quick start
 
-## Try it
-
-You need Docker and [uv](https://docs.astral.sh/uv/getting-started/installation/),
-which fetches its own Python 3.11+.
+Requirements: Docker and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
 ```bash
-docker compose up -d --wait relay   # --wait blocks until the relay is serving
+docker compose up -d --wait relay   # start the relay
 uv sync
 uv run rhfeed                       # Ctrl-C to stop
 ```
 
-That's it. Columns are `hash · kind · to · selector`, grouped by block. Addresses are
-shortened to keep the line readable; `--json` gives the full ones, which is what you
-want if you are about to filter on them.
-
-**Nothing showing up?** `rhfeed` tells you which kind of nothing it is, on stderr: it
-says when it connects, when the backlog drains, when it can't reach the relay, and
-when it's connected but no frames are arriving. That last one means the relay's own
-upstream is down — `docker compose logs relay` prints `Feed connected` when that link
-is healthy and retries `failed connect to sequencer broadcast` when it isn't.
-
-**Why the Docker step?** That's Offchain Labs' official relay — one connection to
-Robinhood's feed, re-served to as many local consumers as you like. You want it because
-the feed is [compressed-only](#compression) and the relay hands you plain JSON, and
-because Robinhood rate-limits **per client, not per connection**, so opening five
-sockets yourself splits one client's budget five ways. It's also cheap: 23 MB of
-memory and ~1.6% of a core, nothing written to disk. It is *not* a full node.
-
-Two things a relay does not give you, so you know what you're trading:
-
-- **It verifies nothing.** A relay has no L1 connection, so it cannot check who signed
-  its upstream, and its defaults accept every signature. Pass `--verify` at your end;
-  see [Verify it](#verify-it).
-- **It hides reorgs.** `broadcastclients.go` dedups by sequence number over a
-  10-second window, and a reorg *is* a re-sent sequence number — so the replacement is
-  dropped inside the relay and the signal never reaches your side of it at all. Read
-  the sequencer feed directly (`--feed mainnet`) if reorgs matter to you.
-
-## Filter it
-
-There is one command and eight flags.
-
-```bash
-# ERC-20 approvals only
-uv run rhfeed --selector 0x095ea7b3
-# one contract — this one is the chain's busiest router, so it shows something
-uv run rhfeed --to 0xcaf681a66d020601342297493863e78c959e5cb2
-# one wallet — for an address you already care about, since it also prints who
-# sent each transaction, and that is the one expensive field. See Speed
-uv run rhfeed --sender 0x830d44e14a9388e5b1880902b8370b951b622b9c
-uv run rhfeed --json            # machine-readable, and the only place full addresses appear
-uv run rhfeed --seconds 30      # stop on a timer instead of Ctrl-C
-uv run rhfeed --feed mainnet    # skip the relay, straight at the public endpoint
-uv run rhfeed --verify          # drop anything not signed by the sequencer key
+```
+seq 20543500  2 tx
+    0xd438f08d61ca9e1cd2cecabfeb9471cb79922940d7c5f61173d1340d41c08f3d  call     0x73991a25C8…  0xac9650d8
+    0xd23ff04ac94df64183ed3546b70201ab15c8d0f0a19f5c673e91de592d67b8c4  call     0x65050A9b7E…  0x4d819a2a
+        ↳ swap          in WETH 10000000000000000  out 0xaebf7814… min 160321143103458484898880  via steps_router
 ```
 
-`--to`, `--selector`, `--sender` and `--actor` can each be repeated, and they combine.
+Each transaction line shows `hash · kind · to · selector`. A `↳` line shows a decoded intent.
+Text output shortens addresses. For full addresses, use `--json`.
 
-`--verify` checks the signature every message carries and drops the ones that fail,
-reporting the count in the summary line even when it is zero. It costs one signature
-recovery per message — around 0.1 ms against a feed delivering tens of messages a
-second. It knows mainnet's chain id and signer only; the chain id is part of what is
-signed, so `--verify` with `--feed testnet` is refused rather than dropping every
-message. Build a `Verifier` with the testnet chain id and signer to check that feed.
+`rhfeed` writes transactions to stdout and status to stderr. If stderr shows `no frames`, run
+`docker compose logs relay` to check the relay connection to the feed.
 
-**Turn it on.** It is off by default only for backward compatibility, and the reason
-this README used to give for leaving it off was wrong: a relay you run does *not* verify
-its upstream. The stock `relay` binary verifies nothing at all — see
-[Verify it](#verify-it). So the local-relay case is not the safe case; it is the case
-where nobody has checked.
+To stop the relay, run `docker compose down`.
 
-Not sure what to filter on? `uv run python examples/replay_capture.py` decodes the
-frames bundled for the tests and ranks the contracts, selectors and wallets in them.
-No relay needed — it reads from disk. A contract stays busy; a wallet may not, so
-check before you take one from there or from the example above.
+### The relay
 
-Done looking? `docker compose down` stops the relay — it is set to restart with
-Docker otherwise.
+The relay is the Offchain Labs Nitro `relay` binary. It keeps one connection to the feed and
+serves all local clients. The feed accepts only clients that offer permessage-deflate. The
+relay serves uncompressed JSON.
 
-## Decode it
+The relay does not verify signatures. Use `--verify`.
 
-A selector says which function. The arguments say what the trade is. `rhfeed` reads
-the arguments for the functions that carry this chain's trading and prints one line per
-intent under the transaction (the transaction also carries an `approve` intent, omitted here):
+## Filter
+
+| Flag | Function |
+|---|---|
+| `--to ADDR` | Keep transactions to this contract. |
+| `--selector 0x…` | Keep calls with this 4-byte selector. |
+| `--sender ADDR` | Keep transactions signed by this address. |
+| `--actor ADDR` | Keep the intents of this wallet. See [Decode](#decode). |
+| `--json` | Write one JSON object per block. |
+| `--seconds N` | Stop after N seconds. |
+| `--feed URL` | Read from this URL. `mainnet` and `testnet` are aliases. The default is the local relay. |
+| `--verify` | Drop messages without a valid sequencer signature. Mainnet only. |
+
+You can use `--to`, `--selector`, `--sender` and `--actor` more than one time. Values of one
+flag are alternatives. All different flags must match.
+
+```bash
+uv run rhfeed --selector 0x095ea7b3                            # ERC-20 approve calls
+uv run rhfeed --to 0xcaf681a66d020601342297493863e78c959e5cb2  # one contract
+```
+
+## Decode
+
+`rhfeed` decodes the arguments of known trade functions into intents:
+
+| Decoded | Intent |
+|---|---|
+| ERC-20 `transfer`, `transferFrom`, `approve`; Permit2 `approve`; ETH transfer | transfer, approve |
+| Uniswap V3 router `exactInput*`, `exactOutput*`; V2 router `swap*`; `multicall` | swap |
+| Universal Router `execute`: V2, V3 and V4 swap commands | swap |
+| `swap(steps[])` aggregator | swap |
+| Pons launchpad buy | swap |
+| 0x AllowanceHolder `exec` | swap |
+| ERC-4337 v0.7/v0.8 `handleOps` with `execute` / `executeBatch` | the intents of the inner calls |
+| Relay router `permit2TransferAndMulticall`, `transferAndMulticall` | relay_fill, relay_sell |
+
+Other calls give no intent. Amounts are raw integers.
+
+In an ERC-4337 bundle, a bundler sends the transaction. The wallet is in the calldata. The
+decoder writes this wallet to the `actor` field. In a Relay fill, `actor` is the wallet that
+receives the tokens. An intent without an `actor` belongs to the sender.
 
 ```bash
 uv run rhfeed --actor 0x9b5e82e3bcde529bbfba26e0b9e7044cef866a79
@@ -128,44 +110,13 @@ seq 20543508  1 tx
         ↳ relay_sell    in 0x69984ad3… 1588651804434692220595  out USDG  via entrypoint_v08 > 0x9b5e82e3… > relay_router
 ```
 
-That transaction was sent by a bundler. The calldata names the selling wallet,
-`0x9b5e82e3…`, inside the bundle — which is why there is `--actor`:
+`actor` comes from the calldata. Only the receipt confirms it.
 
-```bash
-uv run rhfeed --actor 0x9b5e82e3bcde529bbfba26e0b9e7044cef866a79   # this wallet's trades, both legs
-uv run rhfeed --json | jq '.txs[].intents[]'                       # the same, machine-readable
-```
-
-A FOMO buy is filled by a solver of Relay — the cross-chain protocol, not the feed
-relay you run — and names the wallet only as the recipient; `--actor` matches that too,
-so one filter follows a wallet through both halves of its trading — as the calldata
-claims it; the receipt confirms it, see below.
-
-| Decoded | Yields |
-|---|---|
-| ERC-20 `transfer`, `transferFrom`, `approve`; Permit2 `approve` | transfer, approve |
-| Uniswap V3 router `exactInput*`, `exactOutput*`; V2 router `swap*`; `multicall` | swap |
-| Universal Router `execute`: V2, V3 and V4 swap commands | swap |
-| `swap(steps[])` aggregator (contracts `0x65050a…`, `0xe49291…`, `0x5b8d85…`) | swap |
-| Pons launchpad buy (`0xc1120e3d`) | swap |
-| 0x AllowanceHolder `exec` → Settler slippage tuple | swap |
-| ERC-4337 v0.7/v0.8 `handleOps` → `execute` / `executeBatch` | whatever the wallet called, with the wallet as `actor` |
-| Relay router `permit2TransferAndMulticall`, `transferAndMulticall` | relay_fill, relay_sell |
-
-Anything else yields nothing and is shown unchanged. Amounts are raw integers:
-the feed carries no decimals, a node does. Nothing here is an outcome — see
-[Read this before you trade on it](#read-this-before-you-trade-on-it).
-
-## Use it from Python
-
-In your own project, not this checkout:
+## Use from Python
 
 ```bash
 uv add git+https://github.com/chainstacklabs/robinhood-chain-sequencer-feed
 ```
-
-It still expects a relay on `ws://127.0.0.1:9642`; copy
-[`docker-compose.yml`](docker-compose.yml) or pass a URL to `FeedConsumer(...)`.
 
 ```python
 import asyncio
@@ -176,7 +127,7 @@ TRANSFER = selector_of("transfer(address,uint256)")
 
 
 async def main():
-    async for msg in FeedConsumer().live():
+    async for msg in FeedConsumer().live():  # local relay; or FeedConsumer(url)
         for tx in msg.txs:
             if tx.to_bytes in TOKENS and tx.selector == TRANSFER:
                 print(msg.seq, tx.hash, "from", tx.sender)
@@ -185,238 +136,57 @@ async def main():
 asyncio.run(main())
 ```
 
-Worked examples:
-
-| | |
+| Example | Function |
 |---|---|
-| [`token_flow.py`](examples/token_flow.py) | watch specific tokens — the cheap-filter pattern, start here. Its default (NVDA) is a thin market, so expect long gaps between matches; it prints a scan line every 15s so you can tell idle from broken |
-| [`copy_trade_signals.py`](examples/copy_trade_signals.py) | follow wallets, emit JSON signals — takes the addresses to follow as arguments |
-| [`replay_capture.py`](examples/replay_capture.py) | run the same decoder offline against saved frames — no relay, no network. Ranks contracts, selectors and wallets, and times the sender recoveries so the cost is visible |
-| [`bench.py`](examples/bench.py) | reproduce the numbers in the next section on your hardware |
+| [`token_flow.py`](examples/token_flow.py) | Watches tokens. Filters on the cheap fields only. |
+| [`copy_trade_signals.py`](examples/copy_trade_signals.py) | Writes a JSON signal for each trade of the given wallets. |
+| [`replay_capture.py`](examples/replay_capture.py) | Decodes saved frames. Needs no network. |
+| [`bench.py`](examples/bench.py) | Measures the decode costs on your machine. |
+| [`local_execution/`](examples/local_execution/) | Executes feed blocks in a local EVM. |
 
-## Verify it
+### Decode cost
 
-Every message on Robinhood's mainnet feed carries a 65-byte ECDSA signature. Checking
-it takes one line:
+The decoder reads a field from the raw bytes only when you ask for it:
+
+| Fields read | Time per transaction |
+|---|---|
+| `to_bytes`, `selector`, `value`, `nonce`, `gas` | ~2 µs |
+| + `hash` | ~10 µs |
+| + `to` (checksummed) | ~15 µs |
+| + `sender` (signature recovery) | ~70 µs |
+
+Filter on the first-row fields before you read `sender`.
+
+## Verify the signature
 
 ```python
 from rhfeed import MAINNET_FEED, MAINNET_VERIFIER, FeedConsumer
 
 async for msg in FeedConsumer(MAINNET_FEED, verify=MAINNET_VERIFIER).live():
-    ...  # anything reaching here carried a good signature
+    ...  # each message here has a valid sequencer signature
 ```
 
-The signer is `0xDaa526086787d9DEbE1D7F3FFdb1fE50cf8687F4`, which `isBatchPoster()` on
-the L1 `SequencerInbox` returns true for — the same key signs the feed and posts
-batches to Ethereum. So the identity is anchored in Ethereum state rather than in a
-value Robinhood could quietly change, and this is the same check a stock Nitro node
-makes by default.
+Each mainnet message has an ECDSA signature in `signatureV2`. The signer is
+`0xDaa526086787d9DEbE1D7F3FFdb1fE50cf8687F4`, the batch poster on the L1 SequencerInbox. A
+message that fails is dropped and counted in `consumer.stats["unverified_messages"]`.
 
-Worth being clear about what it buys you, since the transport is already `wss`. TLS
-tells you that you reached whatever sits in front of the endpoint. The signature tells
-you the message was produced by the sequencer's key — a claim that survives a
-compromised CDN edge, a proxy of your own, any relay including one you run yourself,
-and a capture off disk. It says nothing about whether the transaction will succeed; see
-the next section for that.
+## Before you trade
 
-**A relay does not do this for you.** It is tempting to assume the relay in
-[`docker-compose.yml`](docker-compose.yml) validates its upstream and that a consumer
-behind it can therefore skip the check. It does not, and the defaults are the reason:
-
-- `relay/relay.go` passes `nil` for the `addrVerifier` argument of
-  `NewBroadcastClients` — a relay has no L1 connection, so it cannot resolve who the
-  batch posters are.
-- `DefaultFeedVerifierConfig` in `util/signature/verifier.go` sets
-  `AcceptSequencer: true` **and** `Dangerous.AcceptMissing: true`.
-- Those two combine at `verifier.go`: `if v.config.Dangerous.AcceptMissing &&
-  v.addrVerifier == nil { return nil }`.
-
-So `--node.feed.input.verify.accept-sequencer` is inert inside the relay binary, and the
-stock relay performs no effective verification. (Read in the v3.11.4 source;
-`verifier.go` is byte-identical from v3.11.2 through v3.12.1, the version this repo
-pins, and `relay.go` still passes `nil`.) Tightening it is not a flag flip either:
-setting `accept-missing=false` while `accept-sequencer=true` with no address verifier
-makes `NewVerifier` fail with "cannot read batch poster addresses". A
-relay that must check has to pin `--node.feed.input.verify.allowed-addresses` instead.
-
-The relay is still the right place to fan out from, and it never *weakens* a signature —
-it copies `signatureV2` through verbatim and refuses to re-sign. End-to-end verification
-works precisely because the relay is transparent. Just do the checking at your end.
-
-A message that fails verification is dropped without advancing the sequence watermark,
-so injecting one frame can't make a reconnect skip the real messages behind it. If
-*everything* is being dropped, suspect the verifier's chain id or signer set before
-suspecting the feed — the first rejection logs both, and the count lands in
-`consumer.stats["unverified_messages"]`.
-
-For lower-level use, [`verify.py`](src/rhfeed/verify.py) exposes `signature_payload`,
-`signature_hash`, `recover_signer` and `Verifier`. Read its docstring before porting
-the preimage anywhere: two of the field encodings are not what the JSON suggests.
-
-## Read this before you trade on it
-
-**These are soft confirmations, not settled transactions.** The sequencer has
-committed to an ordering and has already built the block — the message even carries
-its `blockHash` — but it tells you nothing about the outcome, and nothing has been
-posted to Ethereum yet. A transaction here can still revert, be voided by the
-compliance filter, or be reordered entirely if the sequencer fails over before the
-batch lands. Confirm against a node before you treat anything as final.
-
-**Transactions here can be censored at the protocol level.** Robinhood Chain runs
-ArbOS 61 compliance filtering: an authorised party registers a transaction hash and
-the chain voids it — still included in a block, but with status `0x0`, no logs and
-the gas fully burned — even if it arrived through Ethereum's force-inclusion path.
-**A transaction can appear in this feed and never take effect.**
-`rhfeed.is_filtered_call(tx_hash)` builds the `eth_call` that tells you whether a
-hash has been registered; send it to a node.
-
-**There is nothing to front-run.** The feed reports what the sequencer has already
-decided and already executed. You're reading, not racing.
-
-## Speed
-
-A transaction arrives as raw bytes. Turning it into something usable — who sent it,
-what it calls, how much — costs very different amounts depending on which fields you
-want:
-
-| What you read | Per transaction | Why |
-|---|---|---|
-| `to_bytes`, `selector`, `value`, `nonce`, `gas` | ~4 µs | already sitting in the bytes |
-| `+ hash` | ~10 µs | has to hash the whole transaction |
-| `+ to` (checksummed) | ~18 µs | another hash |
-| `+ sender` | ~70 µs | the address isn't in the transaction — it has to be recovered from the signature |
-
-The last three are computed only when you read them, then cached. So if you filter
-on the cheap fields, a transaction you discard costs ~4 µs instead of ~70.
-
-Don't take the table's word for it — `uv run python examples/bench.py` prints these
-four rows for your machine, and `--reference` adds the libraries the fast paths
-replace.
-
-Headroom is generous either way: the chain does ~71 transactions a second, and one
-core fully decodes ~14,000.
-
-Two parts are written by hand rather than taken from the usual libraries:
-
-- **Reading fields.** The decoder notes where each field starts and ends and slices
-  out only what you ask for, instead of unpacking all of them into objects. About
-  twice as fast as `rlp`.
-- **Recovering the sender.** `eth_account` re-reads the whole transaction before it
-  starts the cryptography. This skips that and goes straight to coincurve: 44 µs
-  instead of 233 µs.
-
-Either would fail quietly if it were subtly wrong — you would get addresses that
-look fine and aren't — so `tests/` checks both against the libraries they replace,
-on transactions of every type and on 143 real ones captured from mainnet:
-
-```bash
-uv run --extra dev pytest
-uv run --extra dev python examples/bench.py --reference   # the same comparison, timed
-```
-
-## Compression
-
-Since 2026-09-17 the feed only accepts clients that offer
-[RFC 7692](https://www.rfc-editor.org/rfc/rfc7692) permessage-deflate. Don't offer it and
-the handshake is refused — HTTP 400, no data at all. The JSON underneath is unchanged.
-
-| Reading it | What you do |
-|---|---|
-| Through the relay | Nothing. It reads the compressed feed and serves plain JSON. |
-| Direct, Python or Node | Nothing. `websockets` and `ws` offer deflate by default. |
-| Direct, Go or Rust | Set it. `gorilla/websocket` and `tungstenite` don't offer it, and it looks like the endpoint is down. |
-
-One trap if you write your own client: Nitro's broadcaster isn't standard either —
-different extension name, fixed dictionary, unreadable by ordinary libraries. Robinhood's
-endpoint *is* standard, which is the only reason direct clients work. That asymmetry is
-why Offchain Labs
-[tell non-node clients to run a relay](https://docs.arbitrum.io/run-arbitrum-node/run-feed-relay).
+- **A feed message is a soft confirmation.** It does not contain the result. A transaction can
+  revert. Confirm the result on a node.
+- **The chain can void a transaction.** Robinhood Chain uses ArbOS compliance filtering. A
+  voided transaction is in a block with status `0x0` and no logs.
+  `rhfeed.is_filtered_call(tx_hash)` makes the `eth_call` that checks a hash. Send it to a node.
+- **A message can be reorged.** `FeedConsumer` sets `msg.reorg` when a known sequence number
+  comes again with a different `blockHash`. The relay can drop a reorg. To see all reorgs, use
+  `--feed mainnet`.
 
 ## Endpoints
 
-| What | Endpoint |
-|---|---|
-| Sequencer feed | `wss://feed.mainnet.chain.robinhood.com` |
-| Testnet feed | `wss://feed.testnet.chain.robinhood.com` |
-
-Point the relay at the feed; point everything else at a node. Robinhood [documents](https://docs.robinhood.com/chain/connecting#developer-endpoints)
-both public endpoints as rate-limited and not for production. Chainstack has
-[Robinhood Chain nodes](https://docs.chainstack.com/reference/robinhood-getting-started)
-and you can [start for free](https://console.chainstack.com/user/account/create) — a
-node answers for the receipts, logs and state the feed deliberately leaves out, and
-for the compliance-filter check above.
-
----
-
-<details>
-<summary>Details worth knowing once you're past the basics</summary>
-
-**One message = one block.** The sequence number *is* the L2 block number. Every
-block also contains one `ArbitrumInternalTx` the feed never carries, because the
-chain generates it rather than receiving it.
-
-**The block already exists when the message reaches you.** The envelope carries a
-populated `blockHash`, which the sequencer can only know after building the block —
-so it orders, executes, *then* broadcasts. What you are ahead of is every node that
-has to re-execute the message before it can serve you a receipt, not the execution
-itself. Useful side effect: you can check a decoded transaction set against that
-hash, and a mismatch at a sequence number you have already seen is a feed reorg.
-
-**The feed is signed.** Every message carries a 65-byte ECDSA signature in
-`signatureV2` — 550 for 550 sampled on 2026-07-27, across two independent
-connections. Arbitrum One's public feed carries none, so this is one of the two
-places Robinhood's feed actually differs from stock. Watch the field name: there is
-no `signature` key in the envelope, only `signatureV2`, and reading the former makes
-a signed feed look unsigned.
-
-The signature commits to
-`keccak256("Arbitrum Nitro Feed:" ‖ chainId ‖ sequenceNumber ‖ blockHash ‖ blockMetadata ‖ delayedMessagesRead ‖ kind ‖ sender ‖ blockNumber ‖ timestamp ‖ requestId? ‖ baseFeeL1? ‖ l2Msg)`
-— see `BroadcastFeedMessage.SignatureHash` in
-[`broadcaster/message/message.go`](https://github.com/OffchainLabs/nitro/blob/master/broadcaster/message/message.go).
-Two details will cost you an afternoon if you reimplement it: `requestId` and
-`baseFeeL1` are *omitted entirely* when nil rather than written as zeros, and
-`baseFeeL1` goes in as Go's `big.Int.Bytes()` — minimal-length big-endian — so a
-zero base fee contributes no bytes at all, not 32.
-
-Recovering the signer over 40 consecutive messages yields exactly one address,
-`0xDaa526086787d9DEbE1D7F3FFdb1fE50cf8687F4`, and `isBatchPoster()` on the L1
-`SequencerInbox` returns true for it. The same key signs the feed and posts batches
-to Ethereum, so the chain of trust terminates in L1 state rather than in Robinhood's
-word for it. That is exactly what a stock Nitro client checks — recover, then
-`IsBatchPosterOrSequencer` against the SequencerInbox, enabled by default via
-`--feed.input.verify.accept-sequencer`. A forged message from anything on the path is
-therefore detectable, not merely unlikely — [Verify it](#verify-it) is how you make
-this package do the detecting. (Sanity check when porting this: recompute
-with the wrong `chainId` and the recovered addresses should scatter across messages.
-If they stay consistent, your preimage isn't binding what you think it is.)
-
-`blockMetadata`, by contrast, really is empty — 0 for 550. On Arbitrum One it is
-present on every message, carrying Timeboost's express-lane bitmap. Its absence here
-means no Timeboost: no express lane, no bidding your way to the front of a block.
-Ordering is whatever reaches the sequencer first, which is why latency work on this
-chain pays off in a way it does not on Arbitrum One.
-
-**The backlog.** Every new client — of the public feed *and* of your own relay — is
-replayed history before live messages start. Measured against a local relay:
-
-| Connecting with | First message age | Messages before live |
+| Endpoint | Mainnet | Testnet |
 |---|---|---|
-| nothing | 124 s | 1,203 |
-| `Arbitrum-Requested-Sequence-Number: <last seen>` | 1 s | 1 |
-| `Arbitrum-Requested-Sequence-Number: <absurdly high>` | 131 s | **1,278** |
+| Sequencer feed | `wss://feed.mainnet.chain.robinhood.com` | `wss://feed.testnet.chain.robinhood.com` |
 
-That last row is a trap: a sequence number past the relay's tail isn't in its lookup
-table, and Nitro's fallback for a failed lookup is to send *the entire backlog*
-([`clientconnection.go`](https://github.com/OffchainLabs/nitro/blob/master/wsbroadcastserver/clientconnection.go)).
-`FeedConsumer` handles it by re-requesting the highest sequence number it has already
-seen — always in range, one duplicate, dropped. On a first connection it just drains,
-which locally takes ~50 ms, and it skips decoding those transactions entirely.
-
-**Any Orbit chain.** This is Nitro's standard broadcaster protocol, so it works
-against any Arbitrum Orbit chain that exposes a feed — point `--node.feed.input.url`
-and `--chain.id` somewhere else.
-
-**The timings above** were measured on one developer machine. The ratios between
-them hold generally; the absolute microseconds depend on your hardware.
-
-</details>
+Robinhood [documents](https://docs.robinhood.com/chain/connecting) the public endpoints as
+rate-limited and not for production. For receipts, logs and state, use a node. Chainstack has
+[Robinhood Chain nodes](https://docs.chainstack.com/reference/robinhood-getting-started).
