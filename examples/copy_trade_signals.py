@@ -7,7 +7,8 @@ into structured signals on stdout. What you do with a signal — mirror the trad
 size it, alert on it, ignore it — is yours to write. Two things it will not do for
 you are pretending a signal is settled and pretending it cannot be censored; both
 are explained at the bottom of this file and in the README. A followed wallet's
-transaction that decodes to no intent emits nothing, and costs no recovery.
+transaction that decodes to no trade — nothing at all, or only an approve or a transfer
+— emits nothing, and costs no recovery.
 
 **The cost of following a wallet.** Matching on `intent.actor` is a set lookup for
 bundled and Relay trades: the decoder has already pulled the wallet out of the
@@ -35,6 +36,9 @@ from rhfeed import FeedConsumer, addr, decode_intents
 WATCH_CONTRACTS: set[bytes] = set()
 # e.g. {addr("0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec")}   # NVDA
 
+# Intent kinds that are trades. `approve` and `transfer` decode too, but are not signals.
+TRADES = {"swap", "relay_fill", "relay_sell"}
+
 
 async def main(follow: set[bytes]) -> None:
     consumer = FeedConsumer()
@@ -47,6 +51,8 @@ async def main(follow: set[bytes]) -> None:
             if WATCH_CONTRACTS and tx.to_bytes not in WATCH_CONTRACTS:
                 continue
             for intent in decode_intents(tx):
+                if intent.kind not in TRADES:
+                    continue
                 # The wallet the trade is for. Only when calldata names none do we
                 # pay for sender recovery.
                 actor = intent.actor if intent.actor is not None else tx.sender_bytes
