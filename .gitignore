@@ -11,3 +11,6 @@ build/
 # Captures are large and disposable — except the one the tests decode against.
 *.jsonl
 !tests/frames.jsonl
+
+# scratch: snapshots, run results, captures
+*.local.*

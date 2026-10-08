@@ -713,6 +713,26 @@ wheels = [
 ]
 
 [[package]]
+name = "pyrevm"
+version = "0.3.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/89/128ca575eb4bb8163e50ca8a46d7da0ae43a5ca5e5deb4574eac3a79a7fc/pyrevm-0.3.7.tar.gz", hash = "sha256:9fc770ec166a44a037da9a6dcdfa3e1757dbd3e0a2cdee97d7679ff5ce6a8f74", size = 60806, upload-time = "2026-01-28T18:21:13.454Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/6a/3dc9c0d244786ab7d529403bd235c564f3c6607cb6dfac63fd8a4424b5cf/pyrevm-0.3.7-cp311-cp311-macosx_10_12_x86_64.whl", hash = "sha256:e43aae42944bfd35ba37f01aec2cd092440865581af44e4580ffc153e30f82cf", size = 3977822, upload-time = "2026-01-28T18:20:42.032Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/ad/2bd8a51d61457c0c9a1e265aca46957fcf294e231f57fb0c2acf65fbe035/pyrevm-0.3.7-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:f5b606806c1e65cbc2633ac13d819a04bce342d68335655ceb9a1bc51fed4447", size = 3886176, upload-time = "2026-01-28T18:20:43.772Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/ce/56d83dd012561ee21f99ed3db5de6602e7328092542e4e9f0d203cbffb40/pyrevm-0.3.7-cp311-cp311-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:2d68a13be420d0f129e37c1cf0e2868812ce17e45749f93f97ef07980c765341", size = 4299865, upload-time = "2026-01-28T18:20:45.541Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/5c/d5b3e55b827f3e1352ced97347c0e4467a068be2f346b16dc73a5badf5bd/pyrevm-0.3.7-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d46fdc51cb6c06b5c2ad85b1c2160b35efc74d27baf318167360d2fb6636aa26", size = 4318428, upload-time = "2026-01-28T18:20:47.421Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/d9/1bd728ce052f9e4b0e81ea05a70df84243d5dcb4a6c95acdeef1731c38c5/pyrevm-0.3.7-cp311-none-win_amd64.whl", hash = "sha256:cfc698975f47cf62f310d452e57148c81ac0463f19f04b8fa34b135170394c33", size = 3830676, upload-time = "2026-01-28T18:20:49.327Z" },
+    { url = "https://files.pythonhosted.org/packages/71/84/35d3bcd79e80fbbb4d92d1e1539babcb121b2efbc7906d89bfeaa9c3bb1e/pyrevm-0.3.7-cp312-cp312-macosx_10_12_x86_64.whl", hash = "sha256:456411132c5431ccc58e59353325e43736ea4bd4941fd8b17c7c14583afda031", size = 3977492, upload-time = "2026-01-28T18:20:51.552Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/55/279f3521ca43c7561c2f54cdd23b6fb91e65ea1e14d22d8482e01b32f13b/pyrevm-0.3.7-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:b149fe2b3e79fad7c638de6f3d5761d4c97fa35fd40a552337af8305c57a70dd", size = 3886572, upload-time = "2026-01-28T18:20:54.558Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/ab/2caf460c88de7a582277f0ecb814188ab7ff6f209eff0908f76aba851e78/pyrevm-0.3.7-cp312-cp312-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:a958e65c694ca99a22fe9283d57b83828902a808114f98f033490bbf0526bc75", size = 4302963, upload-time = "2026-01-28T18:20:56.649Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/6c/17f60815e678474fa8bb36363e4a9f336fa444abb983c2a1e4bb08f681ae/pyrevm-0.3.7-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d055860c3352d6bc180b80255d8563f0b3c0fe6ce62b5c2a52e1bc7ecc4fad4f", size = 4317826, upload-time = "2026-01-28T18:20:58.408Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/99/a039c1c1cabf79f551c628fc4cccca06b113126489d9c2e3deb43c355f5f/pyrevm-0.3.7-cp312-none-win_amd64.whl", hash = "sha256:e5ce297d397c60c50f1c46f75d04620efa36190ef3b91523769d3631dfcefed2", size = 3825155, upload-time = "2026-01-28T18:21:00.136Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/fb/364072806feb7d507c8362fa44a4c530d2767a30c7e400926c3cf8478e72/pyrevm-0.3.7-cp313-none-win_amd64.whl", hash = "sha256:288b6408c538670b21bffa36ae4b44fb7f252cf7355df73f46c9e044bf6c7225", size = 3825154, upload-time = "2026-01-28T18:21:01.874Z" },
+    { url = "https://files.pythonhosted.org/packages/8c/f5/93a4d93333fa160b617d91abde66b058607ba30458876a73356097eae722/pyrevm-0.3.7-cp314-none-win_amd64.whl", hash = "sha256:438686704d2705f7d7e4c833002da62f4e15e28006633a6aca3ae795cfb0ba22", size = 3825150, upload-time = "2026-01-28T18:21:03.966Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -851,6 +871,9 @@ dev = [
     { name = "rlp" },
     { name = "ruff" },
 ]
+exec = [
+    { name = "pyrevm" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -859,12 +882,13 @@ requires-dist = [
     { name = "eth-account", marker = "extra == 'dev'", specifier = ">=0.13" },
     { name = "eth-hash", extras = ["pycryptodome"], specifier = ">=0.7" },
     { name = "orjson", specifier = ">=3.10" },
+    { name = "pyrevm", marker = "extra == 'exec'", specifier = ">=0.3.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "rlp", marker = "extra == 'dev'", specifier = ">=4" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.7" },
     { name = "websockets", specifier = ">=14" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "exec"]
 
 [[package]]
 name = "rlp"
