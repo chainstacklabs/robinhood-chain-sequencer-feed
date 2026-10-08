@@ -1,6 +1,6 @@
 [project]
 name = "rhfeed"
-version = "0.3.0"
+version = "0.4.0"
 description = "Decode an Arbitrum Orbit sequencer feed, fast enough to act on it"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,6 +28,8 @@ dev = [
     "pytest>=8",
     "eth-account>=0.13",
     "rlp>=4",
+    # Reference ABI codec. Tests encode with it and decode with abi.py; src never imports it.
+    "eth-abi>=5",
     "ruff==0.16.7",
 ]
 

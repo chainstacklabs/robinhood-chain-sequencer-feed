@@ -25,6 +25,8 @@ import sys
 
 from .codec import Tx, addr, sel
 from .consume import DEFAULT_RELAY, MAINNET_FEED, TESTNET_FEED, FeedConsumer
+from .intents import Intent, decode_intents
+from .labels import label
 from .verify import MAINNET_VERIFIER
 
 FEEDS = {"mainnet": MAINNET_FEED, "testnet": TESTNET_FEED, "relay": DEFAULT_RELAY}
@@ -55,29 +57,80 @@ class Filter:
     """The filters, applied cheapest first.
 
     `to` and `selector` are compared as raw bytes against fields the decoder has
-    already sliced out, so they cost a set lookup. `sender` triggers ECDSA recovery
-    and is therefore checked last, on whatever survived the others.
+    already sliced out, so they cost a set lookup. Then the calldata is decoded for
+    `actor`, and `sender` goes last because it triggers ECDSA recovery. `actor`
+    recovers the sender only when some intent names no actor, and keeps only the
+    followed actors' intents: one bundle can carry several wallets' trades.
     """
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.to = {addr(a) for a in args.to} if args.to else None
         self.selector = {sel(s) for s in args.selector} if args.selector else None
         self.sender = {addr(a) for a in args.sender} if args.sender else None
+        self.actor = {addr(a) for a in args.actor} if args.actor else None
 
     @property
     def wants_sender(self) -> bool:
-        return self.sender is not None
+        return self.sender is not None or self.actor is not None
 
     @property
     def active(self) -> bool:
-        return bool(self.to or self.selector or self.sender)
+        return bool(self.to or self.selector or self.sender or self.actor)
 
-    def keep(self, tx: Tx) -> bool:
+    def keep(self, tx: Tx) -> list[Intent] | None:
+        """The transaction's intents if it passes, else None. Cheapest checks first."""
         if self.to is not None and tx.to_bytes not in self.to:
-            return False
+            return None
         if self.selector is not None and tx.selector not in self.selector:
-            return False
-        return not (self.sender is not None and tx.sender_bytes not in self.sender)
+            return None
+        intents = decode_intents(tx)
+        if self.actor is not None:
+            intents = self._actors_intents(tx, intents)
+            if intents is None:
+                return None
+        if self.sender is not None and tx.sender_bytes not in self.sender:
+            return None
+        return intents
+
+    def _actors_intents(self, tx: Tx, intents: list[Intent]) -> list[Intent] | None:
+        """The intents of a followed actor, or None if the transaction has none."""
+        # An intent with no decoded actor, or a call with nothing decoded at all, is the
+        # sender's own. Recover the sender only for those.
+        unclaimed = not intents or any(i.actor is None for i in intents)
+        followed = unclaimed and tx.sender_bytes in self.actor
+        mine = [i for i in intents if (followed if i.actor is None else i.actor in self.actor)]
+        if mine or (not intents and followed):
+            return mine
+        return None
+
+
+def tx_json(tx: Tx, intents: list[Intent], show_sender: bool) -> dict:
+    return tx.as_dict(sender=show_sender) | {"intents": [i.as_dict() for i in intents]}
+
+
+def _token(token: bytes | None, has_amount: bool) -> str:
+    """A missing token is ETH only when an amount says so; otherwise it is unknown."""
+    if token is not None:
+        return label(token)
+    return "ETH" if has_amount else "?"
+
+
+def describe(i: Intent) -> str:
+    """One line per intent: kind, in, out, where to, through what. Amounts are raw."""
+    parts = [f"{i.kind:<12}"]
+    if i.token_in is not None or i.amount_in is not None:
+        side = _token(i.token_in, i.amount_in is not None)
+        parts.append(f"in {side}" + ("" if i.amount_in is None else f" {i.amount_in}"))
+    if i.kind in ("swap", "relay_fill", "relay_sell"):
+        out = f"out {_token(i.token_out, i.amount_out is not None)}"
+        if i.amount_out is not None:
+            out += f" {'min' if i.exact_in else 'exact'} {i.amount_out}"
+        parts.append(out)
+    if i.recipient is not None:
+        parts.append(f"→ {label(i.recipient)}" + (" (actor)" if i.recipient == i.actor else ""))
+    if i.via:
+        parts.append("via " + " > ".join(label(v) for v in i.via))
+    return "  ".join(parts)
 
 
 async def watch(args: argparse.Namespace) -> None:
@@ -115,7 +168,8 @@ async def watch(args: argparse.Namespace) -> None:
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(args.seconds) if args.seconds else _forever():
                 async for msg in stream:
-                    txs = [t for t in msg.txs if keep.keep(t)] if keep.active else msg.txs
+                    kept = [(t, keep.keep(t)) for t in msg.txs]
+                    txs = [(t, i) for t, i in kept if i is not None]
                     if not txs and keep.active:
                         continue
                     shown += len(txs)
@@ -129,7 +183,7 @@ async def watch(args: argparse.Namespace) -> None:
                                     "received_at": round(msg.received_at, 6),
                                     "kind": msg.l1_kind_name,
                                     "from_parent_chain": msg.from_parent_chain,
-                                    "txs": [t.as_dict(sender=show_sender) for t in txs],
+                                    "txs": [tx_json(t, intents, show_sender) for t, intents in txs],
                                 }
                             ),
                             flush=True,
@@ -137,7 +191,7 @@ async def watch(args: argparse.Namespace) -> None:
                     else:
                         tag = "" if not msg.from_parent_chain else f" [{msg.l1_kind_name}]"
                         print(f"seq {msg.seq}{tag}  {len(txs)} tx", flush=True)
-                        for t in txs:
+                        for t, intents in txs:
                             # Full hash: a truncated one is only good for eyeballing,
                             # and you generally want to paste this into an explorer or
                             # a node call. Addresses are elided — use --json for ones
@@ -148,6 +202,8 @@ async def watch(args: argparse.Namespace) -> None:
                                 f"{short(t.to)}  {t.selector_hex or ''}",
                                 flush=True,
                             )
+                            for i in intents:
+                                print(f"        ↳ {describe(i)}", flush=True)
 
     s = consumer.stats
     counted = "matched" if keep.active else "seen"
@@ -192,6 +248,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="only transactions from this address, and show who sent each one. "
         "Forces a signature recovery per transaction",
+    )
+    ap.add_argument(
+        "--actor",
+        action="append",
+        help="only transactions whose decoded intent is for this wallet (the user inside a "
+        "4337 bundle or the wallet a Relay fill delivers to) or, when the calldata names no "
+        "one, that it sent. Shows senders",
     )
     return ap
 

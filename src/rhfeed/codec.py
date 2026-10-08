@@ -231,6 +231,7 @@ class Tx:
 
     __slots__ = (
         "_body",
+        "_data",
         "_f",
         "_hash",
         "_sender",
@@ -265,6 +266,7 @@ class Tx:
             self.nonce = self.gas = self.value = self.data_len = 0
             self.to_bytes = None
             self.selector = None
+            self._data = (0, 0)
             return
 
         ni, gi, ti, vi, di = layout
@@ -277,6 +279,7 @@ class Tx:
 
         _, ds, de = fields[di]
         self.data_len = de - ds
+        self._data = (ds, de)
         self.selector: bytes | None = body[ds : ds + 4] if de - ds >= 4 else None
 
     # -- lazy fields --------------------------------------------------------- #
@@ -317,6 +320,14 @@ class Tx:
     @property
     def selector_hex(self) -> str | None:
         return "0x" + self.selector.hex() if self.selector else None
+
+    @property
+    def data(self) -> bytes:
+        """The calldata. One slice, taken on demand — `selector` already covers filtering."""
+        if self._body is None:
+            return b""
+        s, e = self._data
+        return self._body[s:e]
 
     @property
     def kind(self) -> str:

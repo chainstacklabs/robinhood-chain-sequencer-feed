@@ -1,5 +1,6 @@
 """Decode an Arbitrum Orbit sequencer feed, fast enough to act on it."""
 
+from . import decoders  # noqa: F401
 from .codec import (
     FeedMessage,
     Tx,
@@ -13,6 +14,8 @@ from .codec import (
     selector_of,
 )
 from .consume import DEFAULT_RELAY, MAINNET_FEED, TESTNET_FEED, FeedConsumer
+from .intents import Intent, decode_intents
+from .labels import label
 from .verify import (
     FEED_PREFIX,
     MAINNET_CHAIN_ID,
@@ -34,13 +37,16 @@ __all__ = [
     "TESTNET_FEED",
     "FeedConsumer",
     "FeedMessage",
+    "Intent",
     "Tx",
     "Verifier",
     "addr",
     "checksum",
+    "decode_intents",
     "decode_l2_message",
     "decode_transaction",
     "is_filtered_call",
+    "label",
     "parse_frame",
     "recover_signer",
     "sel",

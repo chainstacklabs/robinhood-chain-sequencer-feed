@@ -834,7 +834,7 @@ wheels = [
 
 [[package]]
 name = "rhfeed"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "coincurve" },
@@ -845,6 +845,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "eth-abi" },
     { name = "eth-account" },
     { name = "pytest" },
     { name = "rlp" },
@@ -854,6 +855,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "coincurve", specifier = ">=20" },
+    { name = "eth-abi", marker = "extra == 'dev'", specifier = ">=5" },
     { name = "eth-account", marker = "extra == 'dev'", specifier = ">=0.13" },
     { name = "eth-hash", extras = ["pycryptodome"], specifier = ">=0.7" },
     { name = "orjson", specifier = ">=3.10" },

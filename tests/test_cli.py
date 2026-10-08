@@ -257,3 +257,104 @@ def test_a_draining_backlog_reports_progress_instead_of_warning(caplog):
     messages = [r.getMessage() for r in caplog.records]
     assert any("draining backlog" in m for m in messages), messages
     assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+# --------------------------------------------------------------------------- #
+# intents in the output, and --actor
+# --------------------------------------------------------------------------- #
+
+from rhfeed.cli import describe, tx_json  # noqa: E402
+from rhfeed.codec import Tx  # noqa: E402
+from rhfeed.intents import decode_intents  # noqa: E402
+
+from .helpers import a, by_selector  # noqa: E402
+
+FOMO_WALLET = "0x005dc591f461ee85d53ca400a4c875b210a1c016"  # delivered to by a captured fill
+NOBODY = "0x" + "11" * 20
+
+
+def _filter(*argv):
+    return Filter(build_parser().parse_args(list(argv)))
+
+
+def test_keep_returns_intents_when_no_filter_is_active():
+    tx = by_selector("0x095ea7b3")[0]
+    intents = _filter().keep(tx)
+    assert intents is not None and intents[0].kind == "approve"
+
+
+def test_actor_filter_matches_fill_recipient():
+    fill, approve = by_selector("0x0a2b8f36")[0], by_selector("0x095ea7b3")[0]
+    keep = _filter("--actor", FOMO_WALLET)
+    assert keep.keep(fill) is not None
+    assert keep.keep(approve) is None
+    assert keep.wants_sender and keep.active
+
+
+def test_actor_filter_recovers_sender_only_when_needed(monkeypatch):
+    fill, approve = by_selector("0x0a2b8f36")[0], by_selector("0x095ea7b3")[0]
+    recovered = []
+    original = Tx._recover
+    monkeypatch.setattr(Tx, "_recover", lambda self: recovered.append(self.hash) or original(self))
+    keep = _filter("--actor", NOBODY)
+    assert keep.keep(fill) is None and keep.keep(approve) is None
+    # The fill's intent names its actor, so the sender was never needed. The approve's
+    # intent has no actor, so the sender had to be recovered to rule it out.
+    assert recovered == [approve.hash]
+
+
+def test_actor_filter_returns_only_the_followed_actors_intents(monkeypatch):
+    # A bundle can carry operations for unrelated wallets. Following one of them must
+    # not print the other's trade under it.
+    import rhfeed.cli
+    from rhfeed.intents import Intent
+
+    tx = by_selector("0x095ea7b3")[0]
+    mine, theirs = Intent("swap", a(FOMO_WALLET), ()), Intent("swap", a(NOBODY), ())
+    monkeypatch.setattr(rhfeed.cli, "decode_intents", lambda _: [mine, theirs])
+    assert _filter("--actor", FOMO_WALLET).keep(tx) == [mine]
+    assert _filter().keep(tx) == [mine, theirs]
+
+
+def test_actor_filter_keeps_unclaimed_intents_only_for_a_followed_sender(monkeypatch):
+    import rhfeed.cli
+    from rhfeed.intents import Intent
+
+    tx = by_selector("0x095ea7b3")[0]
+    claimed, unclaimed = Intent("swap", a(NOBODY), ()), Intent("approve", None, ())
+    monkeypatch.setattr(rhfeed.cli, "decode_intents", lambda _: [claimed, unclaimed])
+    assert _filter("--actor", tx.sender).keep(tx) == [unclaimed]
+    assert _filter("--actor", NOBODY).keep(tx) == [claimed]
+    assert _filter("--actor", FOMO_WALLET).keep(tx) is None
+
+
+def test_describe_names_the_kind_the_token_and_the_path():
+    (i,) = decode_intents(by_selector("0x0a2b8f36")[0])
+    line = describe(i)
+    assert line.startswith("relay_fill")
+    assert "in USDG 19" in line  # 1910238 or 1948534, the two captured fills
+    assert "(actor)" in line and "via relay_router" in line
+
+
+def test_describe_marks_an_unknown_output_rather_than_calling_it_eth():
+    from rhfeed.intents import Intent
+
+    unknown = Intent("swap", None, (), token_in=None, amount_in=5)
+    eth_out = Intent("swap", None, (), token_in=None, amount_in=5, token_out=None, amount_out=7)
+    assert "out ?" in describe(unknown)
+    assert "out ETH min 7" in describe(eth_out)
+
+
+def test_tx_json_carries_intents():
+    tx = by_selector("0x095ea7b3")[0]
+    obj = tx_json(tx, decode_intents(tx), show_sender=False)
+    assert obj["hash"] == tx.hash and obj["intents"][0]["kind"] == "approve"
+    assert "sender" not in obj
+
+
+def test_describe_a_plain_eth_transfer():
+    from rhfeed.intents import Intent
+
+    to = addr("0x" + "22" * 20)
+    line = describe(Intent("transfer", None, (to,), token_in=None, amount_in=42, recipient=to))
+    assert "in ETH 42" in line
