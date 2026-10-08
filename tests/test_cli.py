@@ -267,7 +267,7 @@ from rhfeed.cli import describe, tx_json  # noqa: E402
 from rhfeed.codec import Tx  # noqa: E402
 from rhfeed.intents import decode_intents  # noqa: E402
 
-from .helpers import by_selector  # noqa: E402
+from .helpers import a, by_selector  # noqa: E402
 
 FOMO_WALLET = "0x005dc591f461ee85d53ca400a4c875b210a1c016"  # delivered to by a captured fill
 NOBODY = "0x" + "11" * 20
@@ -301,6 +301,31 @@ def test_actor_filter_recovers_sender_only_when_needed(monkeypatch):
     # The fill's intent names its actor, so the sender was never needed. The approve's
     # intent has no actor, so the sender had to be recovered to rule it out.
     assert recovered == [approve.hash]
+
+
+def test_actor_filter_returns_only_the_followed_actors_intents(monkeypatch):
+    # A bundle can carry operations for unrelated wallets. Following one of them must
+    # not print the other's trade under it.
+    import rhfeed.cli
+    from rhfeed.intents import Intent
+
+    tx = by_selector("0x095ea7b3")[0]
+    mine, theirs = Intent("swap", a(FOMO_WALLET), ()), Intent("swap", a(NOBODY), ())
+    monkeypatch.setattr(rhfeed.cli, "decode_intents", lambda _: [mine, theirs])
+    assert _filter("--actor", FOMO_WALLET).keep(tx) == [mine]
+    assert _filter().keep(tx) == [mine, theirs]
+
+
+def test_actor_filter_keeps_unclaimed_intents_only_for_a_followed_sender(monkeypatch):
+    import rhfeed.cli
+    from rhfeed.intents import Intent
+
+    tx = by_selector("0x095ea7b3")[0]
+    claimed, unclaimed = Intent("swap", a(NOBODY), ()), Intent("approve", None, ())
+    monkeypatch.setattr(rhfeed.cli, "decode_intents", lambda _: [claimed, unclaimed])
+    assert _filter("--actor", tx.sender).keep(tx) == [unclaimed]
+    assert _filter("--actor", NOBODY).keep(tx) == [claimed]
+    assert _filter("--actor", FOMO_WALLET).keep(tx) is None
 
 
 def test_describe_names_the_kind_the_token_and_the_path():

@@ -59,7 +59,8 @@ class Filter:
     `to` and `selector` are compared as raw bytes against fields the decoder has
     already sliced out, so they cost a set lookup. Then the calldata is decoded for
     `actor`, and `sender` goes last because it triggers ECDSA recovery. `actor`
-    recovers the sender only when no intent names an actor.
+    recovers the sender only when some intent names no actor, and keeps only the
+    followed actors' intents: one bundle can carry several wallets' trades.
     """
 
     def __init__(self, args: argparse.Namespace) -> None:
@@ -83,20 +84,24 @@ class Filter:
         if self.selector is not None and tx.selector not in self.selector:
             return None
         intents = decode_intents(tx)
-        if self.actor is not None and not self._actor_matches(tx, intents):
-            return None
+        if self.actor is not None:
+            intents = self._actors_intents(tx, intents)
+            if intents is None:
+                return None
         if self.sender is not None and tx.sender_bytes not in self.sender:
             return None
         return intents
 
-    def _actor_matches(self, tx: Tx, intents: list[Intent]) -> bool:
-        if any(i.actor in self.actor for i in intents if i.actor is not None):
-            return True
-        # A call with no decoded actor, or nothing decoded at all, is the sender's own.
-        # Recover the sender only now, and only for those.
-        if intents and all(i.actor is not None for i in intents):
-            return False
-        return tx.sender_bytes in self.actor
+    def _actors_intents(self, tx: Tx, intents: list[Intent]) -> list[Intent] | None:
+        """The intents of a followed actor, or None if the transaction has none."""
+        # An intent with no decoded actor, or a call with nothing decoded at all, is the
+        # sender's own. Recover the sender only for those.
+        unclaimed = not intents or any(i.actor is None for i in intents)
+        followed = unclaimed and tx.sender_bytes in self.actor
+        mine = [i for i in intents if (followed if i.actor is None else i.actor in self.actor)]
+        if mine or (not intents and followed):
+            return mine
+        return None
 
 
 def tx_json(tx: Tx, intents: list[Intent], show_sender: bool) -> dict:
