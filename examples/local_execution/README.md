@@ -3,7 +3,8 @@
 > **Experimental.** A proof of concept. Do not use it in production.
 
 The feed does not contain transaction results. This example executes feed blocks in a local EVM
-(revm through pyrevm) and compares the logs with the chain receipts.
+([revm](https://github.com/bluealloy/revm) through [pyrevm](https://github.com/paradigmxyz/pyrevm))
+and compares the logs with the chain receipts.
 
 ```bash
 uv sync --extra exec

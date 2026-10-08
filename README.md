@@ -23,7 +23,7 @@ This repo shows how to:
 
 1. Connect to the feed.
 2. Decode the transactions and the calldata of known trade functions.
-3. Execute feed blocks in a local EVM. See [`examples/local_execution/`](examples/local_execution/).
+3. Execute feed blocks in a local EVM: [local execution](examples/local_execution/).
 
 ## Quick start
 
