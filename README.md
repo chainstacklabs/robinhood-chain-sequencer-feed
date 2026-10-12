@@ -25,6 +25,9 @@ This repo shows how to:
 2. Decode the transactions and the calldata of known trade functions.
 3. Execute feed blocks in a local EVM: [local execution](examples/local_execution/).
 
+All Arbitrum Nitro chains use the same feed format. `rhfeed` also reads Arbitrum One, Arbitrum
+Nova, Elysium, and other Orbit chains. See [Other Arbitrum Nitro chains](#other-arbitrum-nitro-chains).
+
 ## Quick start
 
 Requirements: Docker and [uv](https://docs.astral.sh/uv/getting-started/installation/).
@@ -190,3 +193,34 @@ message that fails is dropped and counted in `consumer.stats["unverified_message
 Robinhood [documents](https://docs.robinhood.com/chain/connecting) the public endpoints as
 rate-limited and not for production. For receipts, logs and state, use a node. Chainstack has
 [Robinhood Chain nodes](https://docs.chainstack.com/reference/robinhood-getting-started).
+
+## Other Arbitrum Nitro chains
+
+Each chain that runs Arbitrum Nitro publishes this feed: Arbitrum One, Arbitrum Nova, and the
+Orbit chains. Elysium, the Kinetiq chain on Hyperliquid's HyperEVM, is one of them. `rhfeed`
+reads all of them with no code changes. Give the feed URL:
+
+```bash
+uv run rhfeed --feed wss://relay-elysium-testnet.t.conduit.xyz/
+```
+
+| Chain | Feed | Chain ID | Block number |
+|---|---|---|---|
+| Arbitrum One | `wss://arb1.arbitrum.io/feed` | 42161 | `seq` + 22207817 |
+| Arbitrum Nova | `wss://nova.arbitrum.io/feed` | 42170 | `seq` |
+| Elysium testnet | `wss://relay-elysium-testnet.t.conduit.xyz/` | 99801 | `seq` |
+
+On these chains, the transaction hashes from `rhfeed` are the same as in the blocks on the
+chain's RPC.
+
+What is specific to Robinhood Chain:
+
+- **The relay.** `docker-compose.yml` connects to Robinhood Chain mainnet. For a different
+  chain, change `--node.feed.input.url` and `--chain.id`.
+- **`--verify`.** It knows only the Robinhood Chain mainnet signer. On a different chain, it
+  drops all messages. From Python, `Verifier(chain_id, [signer])` checks a different chain that
+  signs its feed.
+- **Contract names.** The decoders use selectors, so the intents of the routers in
+  [Decode](#decode) work on all chains. The names in `via` are Robinhood Chain addresses.
+- **Voided transactions.** Compliance filtering is a Robinhood Chain setting.
+  `is_filtered_call` is not necessary on a chain without it.
