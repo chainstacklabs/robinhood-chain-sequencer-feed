@@ -419,37 +419,66 @@ def decode_transaction(raw: bytes) -> Tx | None:
     return Tx(raw, tx_type, raw[1:] if typed else raw, fields, layout)
 
 
+class _Rejected(Exception):
+    """arbos rejects this L2 message.
+
+    parse_l2.go hands the error back up through every enclosing batch, and the block
+    producer then runs the message with no transactions at all. One bad entry voids its
+    siblings too, so none of them may be surfaced.
+    """
+
+
 def _split_batch(payload: bytes) -> Iterator[bytes]:
-    """A Batch is repeated [8-byte big-endian length][nested L2 message]."""
+    """A Batch is repeated [8-byte big-endian length][nested L2 message].
+
+    As in util.BytestringFromReader, a truncated length or body ends the batch and
+    keeps what came before it. A zero length does not: it reads an empty nested
+    message, which arbos rejects.
+    """
     offset = 0
     size = len(payload)
     while offset + 8 <= size:
         length = int.from_bytes(payload[offset : offset + 8], "big")
         offset += 8
-        if length == 0 or offset + length > size:
+        if offset + length > size:
             return
         yield payload[offset : offset + length]
         offset += length
 
 
-def decode_l2_message(payload: bytes, depth: int = 0) -> list[Tx]:
-    """Walk an l2Msg, flattening nested batches into the signed transactions inside."""
+def _parse_l2_message(payload: bytes, depth: int) -> list[Tx]:
     if not payload:
-        return []
+        # No kind byte: parseL2Message fails its first read.
+        raise _Rejected
     kind = payload[0]
     if kind == L2_SIGNED_TX:
         tx = decode_transaction(payload[1:])
         return [tx] if tx else []
     if kind == L2_BATCH:
         if depth >= MAX_BATCH_DEPTH:
-            # Too deep for arbos to accept, so nothing below here executes.
-            return []
+            # Too deep for arbos to accept, so nothing in this message executes.
+            raise _Rejected
         return [
             tx
             for nested in _split_batch(payload[1:])
-            for tx in decode_l2_message(nested, depth + 1)
+            for tx in _parse_l2_message(nested, depth + 1)
         ]
     return []
+
+
+def decode_l2_message(payload: bytes, depth: int = 0) -> list[Tx]:
+    """Walk an l2Msg, flattening nested batches into the signed transactions inside.
+
+    A nested message arbos rejects (a batch past the depth cap, an empty entry) voids
+    the whole l2Msg, exactly as `ParseL2Transactions` failing does in the block
+    producer, so the result is then empty.
+    """
+    if not payload:
+        return []
+    try:
+        return _parse_l2_message(payload, depth)
+    except _Rejected:
+        return []
 
 
 # --------------------------------------------------------------------------- #
