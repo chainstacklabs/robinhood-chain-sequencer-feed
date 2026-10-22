@@ -267,6 +267,24 @@ def test_batch_nesting_past_the_cap_is_dropped():
     assert decode_l2_message(_nest(_signed_l2_msg(0), MAX_BATCH_DEPTH + 1)) == []
 
 
+def test_too_deep_entry_voids_its_siblings():
+    # parseL2Message returns the depth error up through the outer batch, and the block
+    # producer then runs the message with no transactions: the first one never executes.
+    too_deep = _nest(_signed_l2_msg(1), MAX_BATCH_DEPTH)
+    assert decode_l2_message(_batch(_signed_l2_msg(0), too_deep)) == []
+
+
+def test_empty_entry_voids_the_batch():
+    # A zero length reads an empty nested message; arbos fails on its missing kind byte.
+    assert decode_l2_message(_batch(_signed_l2_msg(0), b"", _signed_l2_msg(1))) == []
+
+
+def test_truncated_tail_keeps_what_came_before():
+    # BytestringFromReader failing ends the batch without an error.
+    message = _batch(_signed_l2_msg(0)) + (999).to_bytes(8, "big") + b"\x04"
+    assert [t.nonce for t in decode_l2_message(message)] == [0]
+
+
 def test_pathologically_deep_batch_does_not_recurse_without_bound():
     # Untrusted feed data must not be able to exhaust the stack.
     assert decode_l2_message(_nest(_signed_l2_msg(0), 10_000)) == []
