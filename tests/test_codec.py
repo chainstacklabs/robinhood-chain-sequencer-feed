@@ -27,6 +27,7 @@ from rhfeed.codec import (
     L2_BATCH,
     L2_SIGNED_TX,
     MAX_BATCH_DEPTH,
+    MAX_L2_MESSAGE_SIZE,
     _rlp_list,
     _rlp_uint,
     _scan_list,
@@ -285,6 +286,88 @@ def test_truncated_tail_keeps_what_came_before():
     assert [t.nonce for t in decode_l2_message(message)] == [0]
 
 
+def _signed_raw(nonce: int) -> bytes:
+    return _signed_l2_msg(nonce)[1:]
+
+
+def _envelope_fields(nonce: int) -> list:
+    return rlp.decode(_signed_raw(nonce)[1:])
+
+
+def _word(value: int) -> bytes:
+    return value.to_bytes(32, "big")
+
+
+# An unsigned user tx (kind 0) is five 32-byte words then calldata; a contract tx
+# (kind 1) has no nonce word, so four.
+UNSIGNED_USER_TX = b"\x00" + _word(21_000) + _word(10**8) + _word(3) + _word(0) * 2
+CONTRACT_TX = b"\x01" + _word(21_000) + _word(10**8) + _word(0) * 2
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        pytest.param(b"\x02", id="nonmutating-call"),
+        pytest.param(b"\x05", id="reserved-kind"),
+        pytest.param(b"\x06", id="heartbeat"),
+        pytest.param(b"\x07", id="signed-compressed-tx"),
+        pytest.param(b"\xff", id="unknown-kind"),
+        pytest.param(b"\x04", id="empty-envelope"),
+        pytest.param(b"\x04\xf8\xff\x00", id="unparseable-envelope"),
+        pytest.param(b"\x04\x03" + rlp.encode([b""] * 14), id="blob-envelope"),
+        pytest.param(b"\x04\x7a" + rlp.encode([b"\x01", b"\x02"]), id="unknown-envelope"),
+        pytest.param(
+            b"\x04\x00" + bytes(ACCOUNT.sign_transaction(TEMPLATES["legacy"]).raw_transaction),
+            id="legacy-behind-a-type-0-byte",
+        ),
+        pytest.param(b"\x04" + _signed_raw(1) + b"\x00", id="trailing-byte"),
+        pytest.param(b"\x04\x02" + rlp.encode(_envelope_fields(1)[:-1]), id="field-short"),
+        pytest.param(b"\x04\x02" + rlp.encode([*_envelope_fields(1), b""]), id="field-over"),
+        pytest.param(UNSIGNED_USER_TX[:-1], id="unsigned-tx-truncated"),
+        pytest.param(b"\x00" + _word(2**64) + UNSIGNED_USER_TX[33:], id="unsigned-tx-gas"),
+        pytest.param(
+            UNSIGNED_USER_TX[:65] + _word(2**64) + UNSIGNED_USER_TX[97:], id="unsigned-tx-nonce"
+        ),
+        pytest.param(CONTRACT_TX[:-1], id="contract-tx-truncated"),
+    ],
+)
+def test_an_entry_arbos_refuses_voids_its_siblings(entry):
+    # parseL2Message fails on the entry and ProduceBlock runs the message empty, so
+    # the valid transaction beside it never executes either.
+    assert decode_l2_message(_batch(_signed_l2_msg(0), entry)) == []
+
+
+@pytest.mark.parametrize("entry", [UNSIGNED_USER_TX, CONTRACT_TX + b"\xa9\x05\x9c\xbb"])
+def test_a_valid_unsigned_entry_keeps_its_siblings(entry):
+    # arbos runs these. They are not surfaced, but they must not void the batch.
+    assert [t.nonce for t in decode_l2_message(_batch(_signed_l2_msg(0), entry))] == [0]
+
+
+def test_every_envelope_arbos_takes_still_decodes(signed):
+    _, raw = signed
+    assert len(decode_l2_message(bytes([L2_SIGNED_TX]) + bytes(raw))) == 1
+
+
+def test_a_7702_envelope_still_decodes():
+    to = TEMPLATES["eip1559"]["to"]
+    auth = ACCOUNT.sign_authorization({"chainId": 4663, "address": to, "nonce": 12})
+    raw = ACCOUNT.sign_transaction(
+        {**TEMPLATES["eip1559"], "type": 4, "nonce": 11, "authorizationList": [auth]}
+    ).raw_transaction
+    (tx,) = decode_l2_message(bytes([L2_SIGNED_TX]) + bytes(raw))
+    assert (tx.tx_type, tx.nonce) == (4, 11)
+
+
+def test_an_l2msg_past_the_size_cap_is_ignored():
+    # ParseL2Transactions refuses an l2Msg over MaxL2MessageSize before reading it.
+    head = _batch(_signed_l2_msg(0), UNSIGNED_USER_TX)
+    pad = b"\x00" * (MAX_L2_MESSAGE_SIZE - len(head))
+    at_cap = _batch(_signed_l2_msg(0), UNSIGNED_USER_TX + pad)
+    assert len(at_cap) == MAX_L2_MESSAGE_SIZE
+    assert len(decode_l2_message(at_cap)) == 1
+    assert decode_l2_message(_batch(_signed_l2_msg(0), UNSIGNED_USER_TX + pad + b"\x00")) == []
+
+
 def test_pathologically_deep_batch_does_not_recurse_without_bound():
     # Untrusted feed data must not be able to exhaust the stack.
     assert decode_l2_message(_nest(_signed_l2_msg(0), 10_000)) == []
@@ -350,14 +433,14 @@ def test_backlog_skipping_leaves_transactions_undecoded():
     assert parse_frame(frame, decode_txs=True)[0].seq == 1
 
 
-def _frame(kind: int, l2_msg: bytes) -> dict:
+def _frame(kind: int, l2_msg: bytes, **header) -> dict:
     return {
         "messages": [
             {
                 "sequenceNumber": 1,
                 "message": {
                     "message": {
-                        "header": {"kind": kind, "timestamp": 1},
+                        "header": {"kind": kind, "timestamp": 1, **header},
                         "l2Msg": base64.b64encode(l2_msg).decode(),
                     }
                 },
@@ -385,6 +468,25 @@ def test_only_l2_message_kind_payloads_decode(kind):
     l2_msg = _signed_l2_msg(5)
     assert [t.nonce for t in parse_frame(_frame(3, l2_msg))[0].txs] == [5]
     assert parse_frame(_frame(kind, l2_msg))[0].txs == []
+
+
+def test_a_delayed_inbox_l2_message_is_marked_as_from_the_parent_chain():
+    # arbnode/delayed.go gives every delayed message a requestId; the sequencer builds
+    # its own with none. A delayed one was never checked before it was ordered.
+    sequenced = _frame(3, _signed_l2_msg(5), requestId=None)
+    delayed = _frame(3, _signed_l2_msg(5), requestId="0x" + "00" * 31 + "2a")
+    (msg,) = parse_frame(sequenced)
+    assert not msg.from_parent_chain and msg.request_id is None
+    (msg,) = parse_frame(delayed)
+    assert msg.from_parent_chain and msg.request_id.endswith("2a")
+    assert [t.nonce for t in msg.txs] == [5]
+
+
+@pytest.mark.skipif(not FRAMES.exists(), reason="no tests/frames.jsonl capture")
+def test_captured_sequencer_messages_are_not_from_the_parent_chain():
+    for line in FRAMES.read_text().splitlines():
+        for msg in parse_frame(json.loads(line)):
+            assert not msg.from_parent_chain
 
 
 def test_data_is_the_calldata(signed):
