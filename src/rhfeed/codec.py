@@ -4,7 +4,8 @@ A relay hands you JSON frames of the form ``{"version":1,"messages":[...]}``. Ea
 message carries an ``l2Msg`` in base64; inside it is either one signed transaction
 or a length-prefixed batch of them, in the order the sequencer chose. No receipts,
 no logs, no state — the outcome is not in the message, so a transaction here can
-still revert or be voided by the compliance filter.
+still revert or be voided by the compliance filter. One that came from the parent
+chain (`FeedMessage.from_parent_chain`) may not execute at all.
 
 Everything here is a pure function over bytes. Nothing touches the network.
 
@@ -57,7 +58,11 @@ L1_KIND = {
 L1_L2_MESSAGE = 3
 
 # arbos/parse_l2.go: L2 message kinds. Only 3 (Batch) and 4 (SignedTx) carry the
-# user transactions a consumer cares about.
+# user transactions a consumer cares about. 0 and 1 are unsigned transactions an L1
+# sender posts through the delayed inbox; arbos runs them, but they are not surfaced.
+# Every other kind is one parseL2Message refuses.
+L2_UNSIGNED_USER_TX = 0
+L2_CONTRACT_TX = 1
 L2_BATCH = 3
 L2_SIGNED_TX = 4
 
@@ -65,6 +70,9 @@ L2_SIGNED_TX = 4
 # depth >= 16. A batch nested past that never reaches the state transition, so
 # its transactions do not execute and must not be surfaced.
 MAX_BATCH_DEPTH = 16
+
+# arbostypes.MaxL2MessageSize. ParseL2Transactions ignores a longer l2Msg outright.
+MAX_L2_MESSAGE_SIZE = 256 * 1024
 
 FILTER_PRECOMPILE = "0x0000000000000000000000000000000000000074"
 IS_FILTERED_SELECTOR = "0x85c733a4"
@@ -216,6 +224,13 @@ _LAYOUT = {
     3: (1, 4, 5, 6, 7),  # blob:    same first eight fields
     4: (1, 4, 5, 6, 7),  # 7702:    same first eight fields
 }
+
+# The envelopes arbos takes inside an l2Msg, with their exact field counts. geth's
+# rlp.DecodeBytes refuses a list with a field too few or too many, and parseL2Message
+# refuses a blob transaction even when it decodes. Keyed by type byte, so a typed
+# envelope of type 0 is absent: geth does not read it as legacy.
+_LEGACY_FIELDS = 9
+_ARBOS_FIELDS = {1: 11, 2: 12, 4: 13}
 
 
 class Tx:
@@ -446,14 +461,45 @@ def _split_batch(payload: bytes) -> Iterator[bytes]:
         offset += length
 
 
+def _signed_tx(raw: bytes) -> Tx:
+    """`decode_transaction`, held to what geth's UnmarshalBinary accepts.
+
+    `decode_transaction` keeps an envelope it cannot read, for its hash. Inside an
+    l2Msg that envelope fails parseL2Message and takes the whole message with it.
+    """
+    if not raw:
+        raise _Rejected
+    count = _ARBOS_FIELDS.get(raw[0]) if raw[0] < 0x80 else _LEGACY_FIELDS
+    tx = decode_transaction(raw)
+    if count is None or tx is None or tx._body is None or tx._f is None:
+        raise _Rejected
+    # The last field must end the envelope: rlp.DecodeBytes refuses trailing bytes.
+    if len(tx._f) != count or tx._f[-1][2] != len(tx._body):
+        raise _Rejected
+    return tx
+
+
+def _check_unsigned_tx(body: bytes, kind: int) -> None:
+    """parseUnsignedTx: 32-byte words for gas limit, max fee, nonce (kind 0 only), to
+    and value, then calldata. Gas limit and nonce must fit in a uint64.
+
+    A kind 1 also needs a request id, which every delayed-inbox message has and the
+    sequencer never builds one without.
+    """
+    words = 5 if kind == L2_UNSIGNED_USER_TX else 4
+    if len(body) < 32 * words or any(body[:24]):
+        raise _Rejected
+    if kind == L2_UNSIGNED_USER_TX and any(body[64:88]):
+        raise _Rejected
+
+
 def _parse_l2_message(payload: bytes, depth: int) -> list[Tx]:
     if not payload:
         # No kind byte: parseL2Message fails its first read.
         raise _Rejected
     kind = payload[0]
     if kind == L2_SIGNED_TX:
-        tx = decode_transaction(payload[1:])
-        return [tx] if tx else []
+        return [_signed_tx(payload[1:])]
     if kind == L2_BATCH:
         if depth >= MAX_BATCH_DEPTH:
             # Too deep for arbos to accept, so nothing in this message executes.
@@ -463,17 +509,23 @@ def _parse_l2_message(payload: bytes, depth: int) -> list[Tx]:
             for nested in _split_batch(payload[1:])
             for tx in _parse_l2_message(nested, depth + 1)
         ]
-    return []
+    if kind in (L2_UNSIGNED_USER_TX, L2_CONTRACT_TX):
+        _check_unsigned_tx(payload[1:], kind)
+        return []
+    # NonmutatingCall (2) and SignedCompressedTx (7) are unimplemented, Heartbeat (6)
+    # has been refused since 2022-08-08, and any other kind is unknown.
+    raise _Rejected
 
 
 def decode_l2_message(payload: bytes, depth: int = 0) -> list[Tx]:
     """Walk an l2Msg, flattening nested batches into the signed transactions inside.
 
-    A nested message arbos rejects (a batch past the depth cap, an empty entry) voids
-    the whole l2Msg, exactly as `ParseL2Transactions` failing does in the block
-    producer, so the result is then empty.
+    Anything parseL2Message refuses, anywhere in the message, voids the whole l2Msg,
+    exactly as `ParseL2Transactions` failing does in the block producer, so the
+    result is then empty. That covers a batch past the depth cap, an empty entry, a
+    kind arbos does not run and an envelope geth cannot decode.
     """
-    if not payload:
+    if not payload or len(payload) > MAX_L2_MESSAGE_SIZE:
         return []
     try:
         return _parse_l2_message(payload, depth)
@@ -501,6 +553,9 @@ class FeedMessage:
     routing around the sequencer entirely.
 
     `l1_block_number` is the parent-chain (Ethereum) block the sequencer had seen.
+
+    `request_id` is set on a message read out of the delayed inbox (its index there)
+    and is None on one the sequencer built.
     """
 
     __slots__ = (
@@ -513,6 +568,7 @@ class FeedMessage:
         "received_at",
         "received_monotonic",
         "reorg",
+        "request_id",
         "seq",
         "timestamp",
         "txs",
@@ -528,6 +584,7 @@ class FeedMessage:
         block_hash: str | None = None,
         delayed_messages_read: int = 0,
         l1_block_number: int = 0,
+        request_id: str | None = None,
     ) -> None:
         self.seq = seq
         self.l1_kind = l1_kind
@@ -537,6 +594,7 @@ class FeedMessage:
         self.block_hash = block_hash
         self.delayed_messages_read = delayed_messages_read
         self.l1_block_number = l1_block_number
+        self.request_id = request_id
         # Set by FeedConsumer; meaningless for a frame decoded straight off disk.
         self.live = True
         self.received_at = 0.0
@@ -552,8 +610,15 @@ class FeedMessage:
 
     @property
     def from_parent_chain(self) -> bool:
-        """Anything not an L2Message entered through Ethereum, not the sequencer."""
-        return self.l1_kind != L1_L2_MESSAGE
+        """Entered through Ethereum, not the sequencer.
+
+        That is every kind but L2Message, and an L2Message an L1 sender posted to the
+        delayed inbox. The sequencer leaves out a transaction that fails to apply; a
+        delayed message keeps whatever was posted, and the block producer skips, with
+        no receipt, a transaction whose signature, nonce or balance does not hold.
+        Treat these `txs` as claims, not as what will execute.
+        """
+        return self.request_id is not None or self.l1_kind != L1_L2_MESSAGE
 
     def __repr__(self) -> str:
         return f"<FeedMessage seq={self.seq} txs={len(self.txs)}>"
@@ -584,6 +649,7 @@ def parse_frame(frame: dict[str, Any], decode_txs: bool = True) -> list[FeedMess
                 block_hash=entry.get("blockHash"),
                 delayed_messages_read=wrapper.get("delayedMessagesRead") or 0,
                 l1_block_number=header.get("blockNumber") or 0,
+                request_id=header.get("requestId"),
             )
         )
     return out
