@@ -21,15 +21,15 @@
 services:
   relay:
     # The build mainnet runs. The sequencer answers `web3_clientVersion` with
-    # v3.12.1-rc.2+70fa99a-20260929T140226Z, and Offchain Labs tagged v3.12.1 at the
-    # same commit. Only the `-stripped` variants exist on Docker Hub.
+    # v3.12.2+5f02f3f-20261014T220458Z, and Offchain Labs tagged v3.12.2 at the
+    # same commit.
     #
-    # Checked against v3.12.0 (ebe9e83) in source, on 2026-10-07. The feed files the
-    # relay depends on are unchanged except `broadcastclient.go`, which gains an opt-in
-    # REST backfill for nodes. `relay/relay.go` opts out of it and refuses
+    # Checked against v3.12.1 (70fa99a) in source, on 2026-10-27. The feed files the
+    # relay depends on are byte-identical. v3.12.1 added an opt-in REST backfill to
+    # `broadcastclient.go`; `relay/relay.go` opts out of it and refuses
     # `--node.feed.input.rest.enable`, so the upstream still sends the relay its full
     # backlog. The relay still runs with no address verifier.
-    image: offchainlabs/nitro-node:v3.12.1-70fa99a-stripped
+    image: offchainlabs/nitro-node:v3.12.2-5f02f3f-stripped
     entrypoint: relay
     restart: unless-stopped
     ports:
