@@ -194,6 +194,22 @@ Robinhood [documents](https://docs.robinhood.com/chain/connecting) the public en
 rate-limited and not for production. For receipts, logs and state, use a node. Chainstack has
 [Robinhood Chain nodes](https://docs.chainstack.com/reference/robinhood-getting-started).
 
+### A feed URL with a key
+
+Some third-party Nitro feeds put the access key in the URL path. `--feed` and
+`FeedConsumer(url)` send the URL unchanged, with its path:
+
+```bash
+uv run rhfeed --feed 'wss://blocks.first-light.stream/{KEY}'
+```
+
+`rhfeed` sends no `Authorization` header. A feed that needs a header does not work with
+`--feed`. `--verify` passes a message only if the feed forwards the sequencer's
+`signatureV2` unchanged.
+
+The same provider has a free `/headers` stream for timing checks. It sends binary records,
+not feed messages, so `rhfeed` does not read it.
+
 ## Other Arbitrum Nitro chains
 
 Each chain that runs Arbitrum Nitro publishes this feed: Arbitrum One, Arbitrum Nova, and the
