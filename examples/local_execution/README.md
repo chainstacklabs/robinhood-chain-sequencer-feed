@@ -41,7 +41,8 @@ not known.
 
 - **No ArbOS precompiles** (`0x64`–`0x74`). A call to one succeeds with empty return data.
 - **No fees.** Gas price and base fee are zero. Coinbase is the Arbitrum sequencer address.
-- **No deposits and no ArbOS internal transaction.** Contract deployments are skipped.
+- **No deposits and no ArbOS internal transaction.** Deposits, retryable submissions and
+  contract deployments are skipped.
 - **`NUMBER`** returns the L1 block number from the feed message, as on Arbitrum.
 - **State in memory.** pyrevm has no on-disk state database.
 - **The snapshot comes after the blocks.** The script builds the snapshot from the blocks that it
