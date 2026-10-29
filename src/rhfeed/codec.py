@@ -29,6 +29,7 @@ that keeps the hand-rolled paths honest.
 from __future__ import annotations
 
 import base64
+import binascii
 from collections.abc import Iterator
 from typing import Any
 
@@ -589,15 +590,14 @@ def decode_parent_chain_message(header: dict[str, Any], payload: bytes, chain_id
     0x68) is not built: its fields depend on the block's base fee, which the feed does
     not carry.
     """
-    try:
-        request_id = _unhex(header["requestId"], "request id")
-        poster = _unhex(header["sender"], "address")
-    except (KeyError, TypeError, ValueError):
-        return []
-    if len(request_id) != 32 or len(poster) != 20:
-        return []
     kind = header.get("kind")
     try:
+        if len(payload) > MAX_L2_MESSAGE_SIZE:
+            # ParseL2Transactions refuses it before looking at the kind.
+            raise _Rejected
+        # A nil RequestId arrives as JSON null, and parse_l2.go refuses the message.
+        request_id = _header_bytes(header, "requestId", 32)
+        poster = _header_bytes(header, "sender", 20)
         if kind == L1_ETH_DEPOSIT:
             if len(payload) < 52:
                 raise _Rejected
@@ -610,6 +610,33 @@ def decode_parent_chain_message(header: dict[str, Any], payload: bytes, chain_id
     except _Rejected:
         return []
     return []
+
+
+def _header_bytes(header: dict[str, Any], key: str, size: int) -> bytes:
+    value = header.get(key)
+    if not isinstance(value, str):
+        raise _Rejected
+    try:
+        raw = _unhex(value, key)
+    except ValueError:
+        raise _Rejected from None
+    if len(raw) != size:
+        raise _Rejected
+    return raw
+
+
+def _l1_base_fee(header: dict[str, Any]) -> int:
+    """L1BaseFee is a *big.Int: a JSON integer, or null for nil, which encodes as 0.
+
+    Anything else does not decode into one. A value outside uint256 is refused too:
+    it has no 32-byte word in the calldata to go into.
+    """
+    fee = header.get("baseFeeL1")
+    if fee is None:
+        return 0
+    if type(fee) is not int or not 0 <= fee < 1 << 256:
+        raise _Rejected
+    return fee
 
 
 def _submit_retryable(
@@ -627,7 +654,7 @@ def _submit_retryable(
     if length and not retry_data:
         raise _Rejected
     retry_data = retry_data.ljust(length, b"\x00")
-    l1_base_fee = int(header.get("baseFeeL1") or 0)
+    l1_base_fee = _l1_base_fee(header)
 
     to = retry_to[12:]
     fields = [
@@ -784,7 +811,12 @@ def parse_frame(
             if l1_kind == L1_L2_MESSAGE:
                 txs = decode_l2_message(base64.b64decode(l2_msg))
             elif chain_id is not None and l1_kind in (L1_SUBMIT_RETRYABLE, L1_ETH_DEPOSIT):
-                txs = decode_parent_chain_message(header, base64.b64decode(l2_msg), chain_id)
+                try:
+                    payload = base64.b64decode(l2_msg)
+                except (binascii.Error, TypeError, ValueError):
+                    payload = None
+                if payload is not None:
+                    txs = decode_parent_chain_message(header, payload, chain_id)
         out.append(
             FeedMessage(
                 seq=entry.get("sequenceNumber", -1),

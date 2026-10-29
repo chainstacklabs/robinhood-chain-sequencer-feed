@@ -24,23 +24,24 @@ ENTRIES = {
     for e in map(json.loads, (Path(__file__).parent / "parent_chain.jsonl").open())
 }
 
-# seq: (chain id, type, hash, to, value, gas, input length)
+# seq: (chain id, type, hash, to, value, gas, input length), from eth_getTransactionByHash
+PRECOMPILE = "0x000000000000000000000000000000000000006e"
 NODE = {
     100864538: (
         4663,
         0x69,
         "0x793b9e3eca7c17ae394bf9ca8c4840ce97bc9a274d5e4fadf5c376cf5d957b6d",
-        "0x000000000000000000000000000000000000006E",
+        PRECOMPILE,
         0,
-        None,
+        126025,
         1156,
     ),
     100868052: (
         4663,
         0x64,
         "0xcb29b668d7f387ca6fa429853959d4354f7f918458bf4492846bfdeea759a313",
-        None,
-        None,
+        "0x48e2a5ebd991e240a1e0455e89a6104c20663b7f",
+        99845787124619670,
         0,
         0,
     ),
@@ -48,8 +49,8 @@ NODE = {
         99801,
         0x64,
         "0x70532e51db367a70a14937be531cd5267fa23bec628eeb4199d4abdc01cc8a99",
-        None,
-        None,
+        "0xe12257ee1580a015ddd85ad92fef28c62000725c",
+        15000000000000000,
         0,
         0,
     ),
@@ -57,9 +58,9 @@ NODE = {
         99801,
         0x69,
         "0x30a61b90f62a26ecf83aa62e8ddb4ca87b15391b6b36f54c8354713178745bf9",
-        "0x000000000000000000000000000000000000006E",
+        PRECOMPILE,
         0,
-        None,
+        300000,
         612,
     ),
 }
@@ -77,12 +78,9 @@ def test_the_built_transaction_is_the_one_in_the_block(seq):
     assert tx.hash == tx_hash
     assert tx.sender == _checksummed(ENTRIES[seq]["message"]["message"]["header"]["sender"])
     assert tx.data_len == input_len
-    if to is not None:
-        assert tx.to == to
-    if value is not None:
-        assert tx.value == value
-    if gas is not None:
-        assert tx.gas == gas
+    assert tx.to.lower() == to
+    assert tx.value == value
+    assert tx.gas == gas
 
 
 def _checksummed(address: str) -> str:
@@ -189,3 +187,47 @@ def test_the_consumer_builds_them_with_its_chain_id():
     consumer._live = True
     (msg,) = consumer._frame({"messages": [ENTRIES[18382981]]}, 0.0, False)
     assert msg.txs[0].hash == NODE[18382981][2]
+
+
+# --------------------------------------------------------------------------- #
+# malformed input: arbos refuses the message, and parse_frame must not raise
+# --------------------------------------------------------------------------- #
+
+
+def _with_header(seq: int, **fields) -> dict:
+    entry = copy.deepcopy(ENTRIES[seq])
+    entry["message"]["message"]["header"].update(fields)
+    return entry
+
+
+@pytest.mark.parametrize("seq", [18382979, 18382981])
+@pytest.mark.parametrize(
+    "fields", [{"requestId": None}, {"requestId": 7}, {"sender": None}, {"sender": ["0x"]}]
+)
+def test_a_missing_or_malformed_request_id_or_poster_is_refused(seq, fields):
+    """A nil RequestId is JSON null; parse_l2.go refuses the message without one."""
+    assert one(_with_header(seq, **fields), NODE[seq][0]).txs == []
+
+
+@pytest.mark.parametrize("fee", ["0x10", "16", -1, 2**256, [1], 1.5, True])
+def test_a_malformed_l1_base_fee_is_refused(fee):
+    """L1BaseFee is a *big.Int: a JSON integer or null, nothing else decodes into one."""
+    assert one(_with_header(18382981, baseFeeL1=fee), 99801).txs == []
+
+
+def test_a_null_l1_base_fee_is_zero():
+    zero = one(_with_header(18382981, baseFeeL1=0), 99801).txs[0].hash
+    assert one(_with_header(18382981, baseFeeL1=None), 99801).txs[0].hash == zero
+
+
+@pytest.mark.parametrize("seq", [18382979, 18382981])
+def test_a_payload_past_the_l2_message_limit_is_refused(seq):
+    """ParseL2Transactions refuses any l2Msg over MaxL2MessageSize before its kind."""
+    padded = _payload(seq) + bytes(256 * 1024)
+    assert one(_with_payload(seq, padded), NODE[seq][0]).txs == []
+
+
+def test_an_l2msg_that_is_not_base64_is_refused():
+    entry = copy.deepcopy(ENTRIES[18382981])
+    entry["message"]["message"]["l2Msg"] = "abc"  # bad padding
+    assert one(entry, 99801).txs == []
