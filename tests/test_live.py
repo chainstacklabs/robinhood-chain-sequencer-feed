@@ -37,9 +37,9 @@ def test_a_frame_that_ends_live_does_not_make_its_backlog_live():
 def test_only_the_live_part_of_a_frame_is_decoded(monkeypatch):
     calls = []
 
-    def spy(frame, decode_txs=True):
+    def spy(frame, decode_txs=True, chain_id=None):
         calls.append(([e["sequenceNumber"] for e in frame["messages"]], decode_txs))
-        return parse_frame(frame, decode_txs)
+        return parse_frame(frame, decode_txs, chain_id)
 
     monkeypatch.setattr(consume, "parse_frame", spy)
     run(FeedConsumer(), frame(stamped(1, 30), stamped(2, 0)))

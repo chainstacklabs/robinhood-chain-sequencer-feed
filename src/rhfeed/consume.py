@@ -70,7 +70,7 @@ from urllib.parse import urlsplit
 import websockets
 
 from .codec import FeedMessage, parse_frame
-from .verify import Verifier
+from .verify import MAINNET_CHAIN_ID, Verifier
 
 _log = logging.getLogger(__name__)
 
@@ -89,8 +89,11 @@ TESTNET_FEED = "wss://feed.testnet.chain.robinhood.com"
 
 FEED_CLIENT_VERSION = "Arbitrum-Feed-Client-Version"
 REQUESTED_SEQ = "Arbitrum-Requested-Sequence-Number"
-#: Sent by Nitro relays and by Conduit's feeds. Robinhood's public edge sends none.
+#: Sent by Nitro relays and by Conduit's feeds. Robinhood's public edge sends none,
+#: so its two feeds are known by URL instead.
 CHAIN_ID = "Arbitrum-Chain-Id"
+#: Testnet's is eth_chainId on rpc.testnet.chain.robinhood.com, 2026-10-29.
+KNOWN_CHAIN_IDS = {MAINNET_FEED: MAINNET_CHAIN_ID, TESTNET_FEED: 46630}
 
 
 class WrongChain(Exception):
@@ -131,8 +134,14 @@ class FeedConsumer:
         max_reconnect_delay: float = 30.0,
         stall_warning: float = 30.0,
         reorg_window: int = 1024,
+        chain_id: int | None = None,
     ) -> None:
         self.url = url
+        #: Needed to build the transactions of SubmitRetryable and EthDeposit messages,
+        #: whose hashes cover it. When None, taken from the feed's handshake, the known
+        #: Robinhood feeds or the verifier, on first connect. Still None means those
+        #: messages arrive with no transactions.
+        self.chain_id = chain_id
         #: Drop messages that do not carry a good signature from an allowed signer.
         #: Off by default for backward compatibility, not because it is unnecessary —
         #: a relay you run verifies nothing of its own (see the module docstring), so
@@ -270,6 +279,8 @@ class FeedConsumer:
                         close_timeout=1,
                     ) as ws:
                         self._check_chain(ws)
+                        if self.chain_id is None:
+                            self.chain_id = self._find_chain_id(ws)
                         if failures:
                             _log.warning("%s is reachable again", _redact(self.url))
                         failures = 0
@@ -314,6 +325,16 @@ class FeedConsumer:
                 # be unwinding a cancellation.
                 monitor.cancel()
 
+    def _find_chain_id(self, ws) -> int | None:
+        for value in ws.response.headers.get_all(CHAIN_ID):
+            try:
+                return int(value, 0)
+            except ValueError:
+                continue
+        if self.url in KNOWN_CHAIN_IDS:
+            return KNOWN_CHAIN_IDS[self.url]
+        return self.verify.chain_id if self.verify is not None else None
+
     def _check_chain(self, ws) -> None:
         """Refuse a feed that announces a chain other than the verifier's."""
         if self.verify is None:
@@ -356,8 +377,8 @@ class FeedConsumer:
             )
         )
         messages = parse_frame(
-            {"messages": entries[:first_live]}, decode_txs=decode_backlog
-        ) + parse_frame({"messages": entries[first_live:]})
+            {"messages": entries[:first_live]}, decode_txs=decode_backlog, chain_id=self.chain_id
+        ) + parse_frame({"messages": entries[first_live:]}, chain_id=self.chain_id)
         # parse_frame returns one message per entry, in order. strict=True turns any
         # future drift in that contract into an error rather than a signature checked
         # against the wrong message.

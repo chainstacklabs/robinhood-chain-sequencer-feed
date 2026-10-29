@@ -29,6 +29,7 @@ that keeps the hand-rolled paths honest.
 from __future__ import annotations
 
 import base64
+import binascii
 from collections.abc import Iterator
 from typing import Any
 
@@ -56,6 +57,18 @@ L1_KIND = {
 # starting 0x04 would read as an L2 SignedTx and decode into a transaction that
 # does not exist.
 L1_L2_MESSAGE = 3
+
+# arbos/parse_l2.go: the parent-chain kinds that arbos turns into one transaction of a
+# type of its own. Its hash covers the chain id, which the message does not carry, so
+# `parse_frame` builds these only when it is given one.
+L1_SUBMIT_RETRYABLE = 9
+L1_ETH_DEPOSIT = 12
+ARB_SUBMIT_RETRYABLE_TX = 0x69
+ARB_DEPOSIT_TX = 0x64
+# A submit-retryable transaction is addressed to the ArbRetryableTx precompile, with
+# its own fields as `submitRetryable(...)` calldata (go-ethereum arb_types.go).
+ARB_RETRYABLE_TX = bytes(19) + b"\x6e"
+SUBMIT_RETRYABLE_SELECTOR = bytes.fromhex("c9f95d32")
 
 # arbos/parse_l2.go: L2 message kinds. Only 3 (Batch) and 4 (SignedTx) carry the
 # user transactions a consumer cares about. 0 and 1 are unsigned transactions an L1
@@ -199,6 +212,12 @@ def _rlp_header(length: int, offset: int) -> bytes:
 
 def _rlp_list(content: bytes) -> bytes:
     return _rlp_header(len(content), 0xC0) + content
+
+
+def _rlp_bytes(value: bytes) -> bytes:
+    if len(value) == 1 and value[0] < 0x80:
+        return value
+    return _rlp_header(len(value), 0x80) + value
 
 
 def _rlp_uint(value: int) -> bytes:
@@ -533,6 +552,151 @@ def decode_l2_message(payload: bytes, depth: int = 0) -> list[Tx]:
         return []
 
 
+def _parent_chain_tx(
+    tx_type: int,
+    fields: list[bytes],
+    to: bytes,
+    value: int,
+    gas: int,
+    data: bytes,
+    sender: bytes,
+) -> Tx:
+    """A transaction arbos builds from a parent-chain message. It has no signature: the
+    sender is the message's poster, so nothing is left to recover."""
+    tx = Tx(bytes((tx_type,)) + _rlp_list(b"".join(fields)), tx_type, None, None, None)
+    tx.gas = gas
+    tx.value = value
+    tx.to_bytes = to
+    tx.data_len = len(data)
+    tx.selector = data[:4] if len(data) >= 4 else None
+    tx._body = data
+    tx._data = (0, len(data))
+    tx._sender = sender
+    return tx
+
+
+def _words(payload: bytes, count: int) -> list[bytes]:
+    """`count` 32-byte words, as arbos reads them with io.ReadFull."""
+    if len(payload) < 32 * count:
+        raise _Rejected
+    return [payload[i : i + 32] for i in range(0, 32 * count, 32)]
+
+
+def decode_parent_chain_message(header: dict[str, Any], payload: bytes, chain_id: int) -> list[Tx]:
+    """The transaction arbos builds from a SubmitRetryable or an EthDeposit message.
+
+    Mirrors parseSubmitRetryableMessage and parseEthDepositMessage in arbos/parse_l2.go.
+    A message arbos refuses gives no transaction. A submit-retryable's auto-redeem (type
+    0x68) is not built: its fields depend on the block's base fee, which the feed does
+    not carry.
+    """
+    kind = header.get("kind")
+    try:
+        if len(payload) > MAX_L2_MESSAGE_SIZE:
+            # ParseL2Transactions refuses it before looking at the kind.
+            raise _Rejected
+        # A nil RequestId arrives as JSON null, and parse_l2.go refuses the message.
+        request_id = _header_bytes(header, "requestId", 32)
+        poster = _header_bytes(header, "sender", 20)
+        if kind == L1_ETH_DEPOSIT:
+            if len(payload) < 52:
+                raise _Rejected
+            to, value = payload[:20], int.from_bytes(payload[20:52], "big")
+            fields = [_rlp_uint(chain_id), _rlp_bytes(request_id), _rlp_bytes(poster)]
+            fields += [_rlp_bytes(to), _rlp_uint(value)]
+            return [_parent_chain_tx(ARB_DEPOSIT_TX, fields, to, value, 0, b"", poster)]
+        if kind == L1_SUBMIT_RETRYABLE:
+            return [_submit_retryable(payload, request_id, poster, header, chain_id)]
+    except _Rejected:
+        return []
+    return []
+
+
+def _header_bytes(header: dict[str, Any], key: str, size: int) -> bytes:
+    value = header.get(key)
+    if not isinstance(value, str):
+        raise _Rejected
+    try:
+        raw = _unhex(value, key)
+    except ValueError:
+        raise _Rejected from None
+    if len(raw) != size:
+        raise _Rejected
+    return raw
+
+
+def _l1_base_fee(header: dict[str, Any]) -> int:
+    """L1BaseFee is a *big.Int: a JSON integer, or null for nil, which encodes as 0.
+
+    Anything else does not decode into one. A value outside uint256 is refused too:
+    it has no 32-byte word in the calldata to go into.
+    """
+    fee = header.get("baseFeeL1")
+    if fee is None:
+        return 0
+    if type(fee) is not int or not 0 <= fee < 1 << 256:
+        raise _Rejected
+    return fee
+
+
+def _submit_retryable(
+    payload: bytes, request_id: bytes, poster: bytes, header: dict[str, Any], chain_id: int
+) -> Tx:
+    w = _words(payload, 9)
+    retry_to, call_value, deposit, max_submission_fee = w[0], w[1], w[2], w[3]
+    fee_refund, beneficiary, gas_limit, max_fee, data_length = w[4], w[5], w[6], w[7], w[8]
+    gas = int.from_bytes(gas_limit, "big")
+    length = int.from_bytes(data_length, "big")
+    if gas >= 1 << 64 or length > MAX_L2_MESSAGE_SIZE:
+        raise _Rejected
+    # A plain Read, not ReadFull: a short tail is zero-padded, and only none at all fails.
+    retry_data = payload[288 : 288 + length]
+    if length and not retry_data:
+        raise _Rejected
+    retry_data = retry_data.ljust(length, b"\x00")
+    l1_base_fee = _l1_base_fee(header)
+
+    to = retry_to[12:]
+    fields = [
+        _rlp_uint(chain_id),
+        _rlp_bytes(request_id),
+        _rlp_bytes(poster),
+        _rlp_uint(l1_base_fee),
+        _rlp_uint(int.from_bytes(deposit, "big")),
+        _rlp_uint(int.from_bytes(max_fee, "big")),
+        _rlp_uint(gas),
+        _rlp_bytes(to if any(to) else b""),  # the zero address is encoded as nil
+        _rlp_uint(int.from_bytes(call_value, "big")),
+        _rlp_bytes(beneficiary[12:]),
+        _rlp_uint(int.from_bytes(max_submission_fee, "big")),
+        _rlp_bytes(fee_refund[12:]),
+        _rlp_bytes(retry_data),
+    ]
+    # What eth_getTransactionByHash returns as `input`.
+    data = (
+        SUBMIT_RETRYABLE_SELECTOR
+        + request_id
+        + l1_base_fee.to_bytes(32, "big")
+        + deposit
+        + call_value
+        + max_fee
+        + gas_limit
+        + max_submission_fee
+        # Addresses are re-padded: arbos keeps only the low 20 bytes of each word.
+        + bytes(12)
+        + fee_refund[12:]
+        + bytes(12)
+        + beneficiary[12:]
+        + bytes(12)
+        + to
+        + (32 * 11).to_bytes(32, "big")
+        + data_length
+        + retry_data
+        + bytes(-length % 32)
+    )
+    return _parent_chain_tx(ARB_SUBMIT_RETRYABLE_TX, fields, ARB_RETRYABLE_TX, 0, gas, data, poster)
+
+
 # --------------------------------------------------------------------------- #
 # frames
 # --------------------------------------------------------------------------- #
@@ -624,11 +788,16 @@ class FeedMessage:
         return f"<FeedMessage seq={self.seq} txs={len(self.txs)}>"
 
 
-def parse_frame(frame: dict[str, Any], decode_txs: bool = True) -> list[FeedMessage]:
+def parse_frame(
+    frame: dict[str, Any], decode_txs: bool = True, chain_id: int | None = None
+) -> list[FeedMessage]:
     """One WebSocket frame can carry several sequencer messages.
 
     With `decode_txs=False` the envelope is read but `txs` is left empty — how the
     consumer skips the relay's backlog replay without paying to decode it.
+
+    With `chain_id`, a SubmitRetryable or EthDeposit message carries the transaction
+    arbos builds from it. Without one, its `txs` is empty: the hash covers the chain id.
     """
     out: list[FeedMessage] = []
     for entry in frame.get("messages") or ():
@@ -637,15 +806,24 @@ def parse_frame(frame: dict[str, Any], decode_txs: bool = True) -> list[FeedMess
         header = incoming.get("header") or {}
         l1_kind = header.get("kind", -1)
         l2_msg = incoming.get("l2Msg")
-        if not (decode_txs and l1_kind == L1_L2_MESSAGE):
-            l2_msg = None
+        txs: list[Tx] = []
+        if decode_txs and l2_msg:
+            if l1_kind == L1_L2_MESSAGE:
+                txs = decode_l2_message(base64.b64decode(l2_msg))
+            elif chain_id is not None and l1_kind in (L1_SUBMIT_RETRYABLE, L1_ETH_DEPOSIT):
+                try:
+                    payload = base64.b64decode(l2_msg)
+                except (binascii.Error, TypeError, ValueError):
+                    payload = None
+                if payload is not None:
+                    txs = decode_parent_chain_message(header, payload, chain_id)
         out.append(
             FeedMessage(
                 seq=entry.get("sequenceNumber", -1),
                 l1_kind=l1_kind,
                 l1_sender=header.get("sender"),
                 timestamp=header.get("timestamp", 0),
-                txs=decode_l2_message(base64.b64decode(l2_msg)) if l2_msg else [],
+                txs=txs,
                 block_hash=entry.get("blockHash"),
                 delayed_messages_read=wrapper.get("delayedMessagesRead") or 0,
                 l1_block_number=header.get("blockNumber") or 0,
