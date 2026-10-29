@@ -99,6 +99,11 @@ uv run rhfeed --to 0xcaf681a66d020601342297493863e78c959e5cb2  # one contract
 
 Other calls give no intent. Amounts are raw integers.
 
+A retryable ticket or an ETH deposit from the parent chain carries the transaction ArbOS builds
+from it, type `0x69` or `0x64`, with the hash in the block. Its hash needs the chain ID, which
+`FeedConsumer` reads from the feed or knows for the Robinhood feeds; pass `chain_id=` for others.
+The auto-redeem (`0x68`) is not built: it needs the block's base fee.
+
 In an ERC-4337 bundle, a bundler sends the transaction. The wallet is in the calldata. The
 decoder writes this wallet to the `actor` field. In a Relay fill, `actor` is the wallet that
 receives the tokens. An intent without an `actor` belongs to the sender.

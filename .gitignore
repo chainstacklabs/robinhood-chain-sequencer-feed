@@ -8,9 +8,10 @@ build/
 .ruff_cache/
 .pytest_cache/
 
-# Captures are large and disposable — except the one the tests decode against.
+# Captures are large and disposable — except the ones the tests decode against.
 *.jsonl
 !tests/frames.jsonl
+!tests/parent_chain.jsonl
 
 # scratch: snapshots, run results, captures
 *.local.*
