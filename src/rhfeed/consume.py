@@ -89,6 +89,17 @@ TESTNET_FEED = "wss://feed.testnet.chain.robinhood.com"
 
 FEED_CLIENT_VERSION = "Arbitrum-Feed-Client-Version"
 REQUESTED_SEQ = "Arbitrum-Requested-Sequence-Number"
+#: Sent by Nitro relays and by Conduit's feeds. Robinhood's public edge sends none.
+CHAIN_ID = "Arbitrum-Chain-Id"
+
+
+class WrongChain(Exception):
+    """The feed announced a chain the verifier does not check.
+
+    Every message would fail verification, and reconnecting cannot change that, so the
+    consumer stops instead of retrying. Nitro's own broadcastclient treats the same
+    mismatch as fatal.
+    """
 
 
 def _redact(url: str) -> str:
@@ -259,6 +270,7 @@ class FeedConsumer:
                         # serves uncompressed and ignores the offer.
                         compression="deflate",
                     ) as ws:
+                        self._check_chain(ws)
                         if failures:
                             _log.warning("%s is reachable again", _redact(self.url))
                         failures = 0
@@ -274,7 +286,7 @@ class FeedConsumer:
                                 msg.received_at = received
                                 msg.received_monotonic = mono
                                 yield msg
-                except asyncio.CancelledError:
+                except (asyncio.CancelledError, WrongChain):
                     raise
                 except Exception as exc:
                     failures += 1
@@ -301,6 +313,26 @@ class FeedConsumer:
                 # Cancel without awaiting: this runs during aclose(), which may itself
                 # be unwinding a cancellation.
                 monitor.cancel()
+
+    def _check_chain(self, ws) -> None:
+        """Refuse a feed that announces a chain other than the verifier's."""
+        if self.verify is None:
+            return
+        for value in ws.response.headers.get_all(CHAIN_ID):
+            try:
+                announced = int(value, 0)
+            except ValueError:
+                continue
+            if announced != self.verify.chain_id:
+                # Drop the connection rather than close it. A feed still sending its
+                # backlog never answers the close frame, websockets then waits out
+                # close_timeout (10 s), and a --seconds deadline expiring meanwhile
+                # swallows this error.
+                ws.transport.abort()
+                raise WrongChain(
+                    f"{_redact(self.url)} serves chain {announced}, and the verifier checks "
+                    f"chain {self.verify.chain_id}, so it would drop every message"
+                )
 
     def _frame(self, frame: dict, started: float, decode_backlog: bool):
         # Decide liveness from the frame's own timestamps before deciding whether the

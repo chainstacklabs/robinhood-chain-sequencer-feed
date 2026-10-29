@@ -24,7 +24,7 @@ import logging
 import sys
 
 from .codec import Tx, addr, sel
-from .consume import DEFAULT_RELAY, MAINNET_FEED, TESTNET_FEED, FeedConsumer
+from .consume import DEFAULT_RELAY, MAINNET_FEED, TESTNET_FEED, FeedConsumer, WrongChain
 from .intents import Intent, decode_intents
 from .labels import label
 from .verify import MAINNET_VERIFIER
@@ -266,7 +266,13 @@ def main() -> None:
     # summary line, so redirecting stdout still leaves them visible.
     logging.basicConfig(level=logging.INFO, format="# %(message)s", stream=sys.stderr)
     with contextlib.suppress(KeyboardInterrupt):
-        asyncio.run(watch(args))
+        try:
+            asyncio.run(watch(args))
+        except WrongChain as exc:
+            sys.exit(
+                f"rhfeed: {exc}. --verify knows only Robinhood Chain mainnet. Drop --verify, "
+                "or build a Verifier for that chain and pass it to FeedConsumer directly."
+            )
 
 
 if __name__ == "__main__":

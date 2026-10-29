@@ -16,7 +16,9 @@ change that field and verification keeps passing.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import contextlib
 import copy
 import json
 import time
@@ -230,3 +232,98 @@ def test_verification_is_off_by_default():
     assert [m.seq for m in consumer._frame(frame(forged), time.time(), True)] == [
         forged["sequenceNumber"]
     ]
+
+
+# --------------------------------------------------------------------------- #
+# a feed that announces another chain
+# --------------------------------------------------------------------------- #
+
+
+class _Feed:
+    """A connection that answers the handshake with these headers and sends nothing.
+
+    With `answers_close=False` it behaves like a real feed still sending its backlog:
+    the close frame goes unanswered, so leaving politely takes websockets' 10 s
+    close_timeout, and only an abort is quick.
+    """
+
+    def __init__(self, headers: dict[str, str], answers_close: bool):
+        from websockets.datastructures import Headers
+
+        self.response = type("Response", (), {"headers": Headers(headers)})()
+        self.answers_close = answers_close
+        self.aborted = False
+        self.transport = self
+        _Feed.last = self
+
+    def abort(self):
+        self.aborted = True
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        if not (self.answers_close or self.aborted):
+            await asyncio.sleep(10)
+        return False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        await asyncio.sleep(3600)
+        raise StopAsyncIteration
+
+
+def _serve(monkeypatch, headers: dict[str, str], answers_close: bool = True) -> None:
+    from rhfeed import consume
+
+    monkeypatch.setattr(
+        consume.websockets, "connect", lambda url, **kw: _Feed(headers, answers_close)
+    )
+
+
+async def _first(consumer: FeedConsumer, seconds: float = 0.3) -> None:
+    async with contextlib.aclosing(consumer.live()) as stream:
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(seconds):
+                async for _ in stream:
+                    pass
+
+
+def test_verify_refuses_a_feed_that_announces_another_chain(monkeypatch):
+    """Elysium's relay announces 99801; the mainnet verifier would drop every message."""
+    from rhfeed.consume import WrongChain
+
+    _serve(monkeypatch, {"Arbitrum-Chain-Id": "99801"}, answers_close=False)
+    consumer = FeedConsumer("ws://127.0.0.1:1", verify=MAINNET_VERIFIER)
+    with pytest.raises(WrongChain, match="99801"):
+        asyncio.run(_first(consumer))
+    assert consumer.stats["reconnects"] == 0
+    assert _Feed.last.aborted
+
+
+@pytest.mark.parametrize(
+    ("headers", "verify"),
+    [
+        ({"Arbitrum-Chain-Id": "4663"}, MAINNET_VERIFIER),  # the local relay
+        ({}, MAINNET_VERIFIER),  # the Robinhood edge sends no chain id
+        ({"Arbitrum-Chain-Id": "99801"}, None),  # nothing to verify
+    ],
+)
+def test_a_matching_or_silent_feed_is_read(monkeypatch, headers, verify):
+    _serve(monkeypatch, headers)
+    consumer = FeedConsumer("ws://127.0.0.1:1", verify=verify)
+    asyncio.run(_first(consumer))
+    assert not _Feed.last.aborted
+    assert consumer.stats["reconnects"] == 0
+
+
+def test_the_cli_says_why_it_refused(monkeypatch):
+    from rhfeed import cli
+
+    # A --seconds deadline shorter than close_timeout used to swallow the refusal.
+    _serve(monkeypatch, {"Arbitrum-Chain-Id": "99801"}, answers_close=False)
+    monkeypatch.setattr("sys.argv", ["rhfeed", "--verify", "--seconds", "1"])
+    with pytest.raises(SystemExit, match=r"chain 99801.*Drop --verify"):
+        cli.main()
