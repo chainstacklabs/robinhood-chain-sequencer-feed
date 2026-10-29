@@ -229,9 +229,10 @@ What is specific to Robinhood Chain:
 
 - **The relay.** `docker-compose.yml` connects to Robinhood Chain mainnet. For a different
   chain, change `--node.feed.input.url` and `--chain.id`.
-- **`--verify`.** It knows only the Robinhood Chain mainnet signer. On a different chain, it
-  drops all messages. From Python, `Verifier(chain_id, [signer])` checks a different chain that
-  signs its feed.
+- **`--verify`.** It knows only the Robinhood Chain mainnet signer, so leave it off on other
+  chains. If you pass it anyway, `rhfeed` stops with an error when the feed sends its chain ID,
+  as the Elysium feed does, and drops every message when it doesn't. From Python,
+  `Verifier(chain_id, [signer])` checks a different chain that signs its feed.
 - **Contract names.** The decoders use selectors, so the intents of the routers in
   [Decode](#decode) work on all chains. The names in `via` are Robinhood Chain addresses.
 - **Voided transactions.** Compliance filtering is a Robinhood Chain setting.

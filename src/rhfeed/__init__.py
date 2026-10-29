@@ -13,7 +13,7 @@ from .codec import (
     sel,
     selector_of,
 )
-from .consume import DEFAULT_RELAY, MAINNET_FEED, TESTNET_FEED, FeedConsumer
+from .consume import DEFAULT_RELAY, MAINNET_FEED, TESTNET_FEED, FeedConsumer, WrongChain
 from .intents import Intent, decode_intents
 from .labels import label
 from .verify import (
@@ -40,6 +40,7 @@ __all__ = [
     "Intent",
     "Tx",
     "Verifier",
+    "WrongChain",
     "addr",
     "checksum",
     "decode_intents",
