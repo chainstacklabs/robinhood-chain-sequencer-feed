@@ -258,9 +258,10 @@ class FeedConsumer:
                         # port to another language could quietly drop. A local relay
                         # serves uncompressed and ignores the offer.
                         compression="deflate",
-                        # Leaving waits this long for the feed to answer the close frame,
-                        # 10 s by default. A feed still sending its backlog does not
-                        # answer: a 3-second run against Elysium's feed took 13 s to exit.
+                        # Leaving waits this long for the feed's answer to the close
+                        # frame, 10 s by default. Mid-backlog the answer is stuck behind
+                        # frames nobody reads: websockets stops reading at 16 queued
+                        # messages. A 3-second run against Elysium's feed took 13 s to exit.
                         close_timeout=1,
                     ) as ws:
                         if failures:

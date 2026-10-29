@@ -258,8 +258,9 @@ def test_the_connection_asks_for_compression(monkeypatch):
 
 
 def test_leaving_does_not_wait_long_for_the_feed_to_answer_close(monkeypatch):
-    """A feed still sending its backlog does not answer the close frame. websockets
-    waits close_timeout for it, 10 s by default, on every --seconds and Ctrl-C exit."""
+    """Mid-backlog, the feed's answer to the close frame is stuck behind unread frames.
+    websockets waits close_timeout for it, 10 s by default, on every --seconds and
+    Ctrl-C exit."""
     from rhfeed import consume as consume_module
 
     seen: list[dict] = []
