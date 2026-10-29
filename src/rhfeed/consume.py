@@ -65,6 +65,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
+from urllib.parse import urlsplit
 
 import websockets
 
@@ -88,6 +89,21 @@ TESTNET_FEED = "wss://feed.testnet.chain.robinhood.com"
 
 FEED_CLIENT_VERSION = "Arbitrum-Feed-Client-Version"
 REQUESTED_SEQ = "Arbitrum-Requested-Sequence-Number"
+
+
+def _redact(url: str) -> str:
+    """The feed URL as it is safe to log: scheme, host and port.
+
+    Third-party feeds take the access key in the path, the query or `user:pass@`, and
+    the consumer logs the URL on every connect and every warning, so anything after the
+    host is cut. A URL with nothing after the host is returned unchanged.
+    """
+    parts = urlsplit(url)
+    if not (
+        parts.username or parts.password or parts.path.strip("/") or parts.query or parts.fragment
+    ):
+        return url
+    return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}/…"
 
 
 class FeedConsumer:
@@ -202,7 +218,7 @@ class FeedConsumer:
                         "no frames from %s for %.0fs — connected, but nothing is arriving. "
                         "Usually the relay's own upstream is down "
                         "(check: docker compose logs relay)",
-                        self.url,
+                        _redact(self.url),
                         idle,
                     )
                 continue
@@ -229,7 +245,7 @@ class FeedConsumer:
         try:
             while True:
                 try:
-                    _log.info("connecting to %s", self.url)
+                    _log.info("connecting to %s", _redact(self.url))
                     async with websockets.connect(
                         self.url,
                         additional_headers=self._headers(),
@@ -244,7 +260,7 @@ class FeedConsumer:
                         compression="deflate",
                     ) as ws:
                         if failures:
-                            _log.warning("%s is reachable again", self.url)
+                            _log.warning("%s is reachable again", _redact(self.url))
                         failures = 0
                         delay = self.reconnect_delay
                         started = time.time()
@@ -268,9 +284,10 @@ class FeedConsumer:
                     # and the retry loop would otherwise hide it forever.
                     _log.warning(
                         "cannot read %s (%s: %s) — retrying in %.1fs%s",
-                        self.url,
+                        _redact(self.url),
                         type(exc).__name__,
-                        exc,
+                        # websockets quotes the URL in some errors, an invalid URI for one
+                        str(exc).replace(self.url, _redact(self.url)),
                         delay,
                         "; is the relay running? (docker compose up -d relay)"
                         if failures == 1

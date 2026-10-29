@@ -194,6 +194,18 @@ Robinhood [documents](https://docs.robinhood.com/chain/connecting) the public en
 rate-limited and not for production. For receipts, logs and state, use a node. Chainstack has
 [Robinhood Chain nodes](https://docs.chainstack.com/reference/robinhood-getting-started).
 
+### A feed URL with a key
+
+`--feed` and `FeedConsumer(url)` send the URL unchanged, so a key in the path, the query or
+`user:pass@` works. A bearer token or another custom header does not. Use `--verify` on a feed
+you don't run:
+
+```bash
+uv run rhfeed --feed 'wss://feed.example.com/{KEY}' --verify
+```
+
+The log shows only the scheme and host, `wss://feed.example.com/…`.
+
 ## Other Arbitrum Nitro chains
 
 Each chain that runs Arbitrum Nitro publishes this feed: Arbitrum One, Arbitrum Nova, and the
