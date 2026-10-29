@@ -183,6 +183,57 @@ def test_an_unreachable_relay_is_reported_not_swallowed(caplog):
     assert consumer.stats["reconnects"] > 0
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ws://127.0.0.1:9642",
+        "wss://feed.mainnet.chain.robinhood.com",
+        "wss://relay-elysium-testnet.t.conduit.xyz/",
+    ],
+)
+def test_a_url_with_nothing_after_the_host_is_logged_as_is(url):
+    from rhfeed.consume import _redact
+
+    assert _redact(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "wss://feed.example.com/SECRET",
+        "wss://feed.example.com/?key=SECRET",
+        "wss://user:SECRET@feed.example.com",
+        "wss://feed.example.com/#SECRET",
+    ],
+)
+def test_a_key_anywhere_in_the_url_is_cut_from_the_log(url):
+    from rhfeed.consume import _redact
+
+    assert _redact(url) == "wss://feed.example.com/…"
+
+
+def test_a_keyed_feed_url_stays_out_of_the_log(caplog, monkeypatch):
+    """Third-party feeds put the access key in the URL, and the consumer logs the URL
+    on every connect and every warning. The exception text can quote it too."""
+    from rhfeed import consume as consume_module
+
+    url = "ws://user:PASSWORD@127.0.0.1:1/PATHKEY?key=QUERYKEY"
+
+    def _refuse(url, **kwargs):
+        raise OSError(f"cannot reach {url}")
+
+    monkeypatch.setattr(consume_module.websockets, "connect", _refuse)
+    consumer = FeedConsumer(url, reconnect_delay=0.05)
+    with caplog.at_level(logging.INFO, logger="rhfeed.consume"):
+        asyncio.run(_drain(consumer, 0.3))
+
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert "connecting to ws://127.0.0.1:1/…" in logged
+    assert "cannot read ws://127.0.0.1:1/…" in logged
+    for secret in ("PASSWORD", "PATHKEY", "QUERYKEY"):
+        assert secret not in logged
+
+
 def test_the_connection_asks_for_compression(monkeypatch):
     """The public feed refuses a handshake that does not offer permessage-deflate.
 
