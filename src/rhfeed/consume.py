@@ -324,10 +324,10 @@ class FeedConsumer:
             except ValueError:
                 continue
             if announced != self.verify.chain_id:
-                # Drop the connection rather than close it. A feed still sending its
-                # backlog never answers the close frame, websockets then waits out
-                # close_timeout (10 s), and a --seconds deadline expiring meanwhile
-                # swallows this error.
+                # Drop the connection rather than close it. Mid-backlog, the feed's
+                # answer to a close frame is stuck behind frames nobody reads, so
+                # websockets waits out close_timeout, and a --seconds deadline
+                # expiring meanwhile swallows this error.
                 ws.transport.abort()
                 raise WrongChain(
                     f"{_redact(self.url)} serves chain {announced}, and the verifier checks "

@@ -242,9 +242,9 @@ def test_verification_is_off_by_default():
 class _Feed:
     """A connection that answers the handshake with these headers and sends nothing.
 
-    With `answers_close=False` it behaves like a real feed still sending its backlog:
-    the close frame goes unanswered, so leaving politely takes websockets' 10 s
-    close_timeout, and only an abort is quick.
+    With `answers_close=False` it behaves like a real feed mid-backlog, whose answer
+    to the close frame is stuck behind unread frames: leaving politely takes
+    websockets' 10 s close_timeout, and only an abort is quick.
     """
 
     def __init__(self, headers: dict[str, str], answers_close: bool):
