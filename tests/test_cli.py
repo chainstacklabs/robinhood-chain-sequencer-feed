@@ -257,6 +257,25 @@ def test_the_connection_asks_for_compression(monkeypatch):
     assert seen[0].get("compression") == "deflate"
 
 
+def test_leaving_does_not_wait_long_for_the_feed_to_answer_close(monkeypatch):
+    """Mid-backlog, the feed's answer to the close frame is stuck behind unread frames.
+    websockets waits close_timeout for it, 10 s by default, on every --seconds and
+    Ctrl-C exit."""
+    from rhfeed import consume as consume_module
+
+    seen: list[dict] = []
+
+    def _capture(url, **kwargs):
+        seen.append(kwargs)
+        raise OSError("no feed in a test")
+
+    monkeypatch.setattr(consume_module.websockets, "connect", _capture)
+    asyncio.run(_drain(FeedConsumer("ws://127.0.0.1:1", reconnect_delay=0.05), 0.3))
+
+    assert seen, "the consumer never tried to connect"
+    assert seen[0].get("close_timeout", 10) <= 1
+
+
 def test_seconds_stops_a_run_that_never_receives_anything():
     """--seconds bounds the run itself, not the gap between messages.
 
