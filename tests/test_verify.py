@@ -293,7 +293,7 @@ async def _first(consumer: FeedConsumer, seconds: float = 0.3) -> None:
 
 def test_verify_refuses_a_feed_that_announces_another_chain(monkeypatch):
     """Elysium's relay announces 99801; the mainnet verifier would drop every message."""
-    from rhfeed.consume import WrongChain
+    from rhfeed import WrongChain
 
     _serve(monkeypatch, {"Arbitrum-Chain-Id": "99801"}, answers_close=False)
     consumer = FeedConsumer("ws://127.0.0.1:1", verify=MAINNET_VERIFIER)
