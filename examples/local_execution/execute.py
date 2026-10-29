@@ -37,7 +37,7 @@ import pyrevm
 from eth_hash.auto import keccak
 
 from rhfeed import MAINNET_FEED, FeedConsumer
-from rhfeed.codec import FeedMessage
+from rhfeed.codec import ARB_DEPOSIT_TX, ARB_SUBMIT_RETRYABLE_TX, FeedMessage
 
 CHAIN_ID = 4663
 #: Arbitrum blocks name this address as coinbase.
@@ -46,6 +46,9 @@ CALL_OPS = {"CALL", "STATICCALL"}
 CONTEXT_KEEPING_OPS = {"DELEGATECALL", "CALLCODE"}
 #: Opcodes that read another account without calling it.
 ACCOUNT_PROBES = {"BALANCE", "EXTCODESIZE", "EXTCODEHASH", "EXTCODECOPY"}
+#: ArbOS runs these, not the EVM: a deposit mints, a submit-retryable goes to a precompile.
+#: As a plain call they cannot match the receipt.
+PARENT_CHAIN_TXS = {ARB_DEPOSIT_TX, ARB_SUBMIT_RETRYABLE_TX}
 #: A runaway on synthetic or stale state can loop to the block gas limit; cap each call.
 GAS_CAP = 30_000_000
 HERE = Path(__file__).parent
@@ -215,6 +218,9 @@ def run_blocks(evm, blocks, stats: Counter, label: str, reads=None, outcomes=Non
         for tx in msg.txs:
             if tx.to_bytes is None:
                 stats["deploy_skipped"] += 1
+                continue
+            if tx.tx_type in PARENT_CHAIN_TXS:
+                stats["parent_chain_tx_skipped"] += 1
                 continue
             if reads is not None:
                 status, logs, slots, accounts = traced(evm, tx)
