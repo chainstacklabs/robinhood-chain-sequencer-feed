@@ -174,19 +174,16 @@ class FeedConsumer:
             headers[REQUESTED_SEQ] = str(self._highest_seq)
         return headers
 
-    def _judge_live(self, entry: dict, started: float) -> bool:
-        if self._live:
-            return True
+    def _is_current(self, entry: dict, started: float) -> bool:
         now = time.time()
         header = ((entry.get("message") or {}).get("message") or {}).get("header") or {}
         timestamp = header.get("timestamp", 0)
-        self._live = (
+        return (
             # Primary: the sequencer stamps each message; a live one is seconds old.
             (bool(timestamp) and (now - timestamp) <= self.live_threshold)
             # Fallback for a skewed clock: the backlog is finite, so stop waiting.
             or (now - started) > self.max_backlog_seconds
         )
-        return self._live
 
     async def _monitor(self) -> None:
         """Narrate an open connection that has not started producing yet.
@@ -308,9 +305,18 @@ class FeedConsumer:
         entries = frame.get("messages") or ()
         if not entries:
             return
+        # Verify each entry once, up front, so that only a trusted entry can end the
+        # backlog: a fresh timestamp on a forged one would otherwise promote the real,
+        # older entries behind it.
+        accepted = [self.verify is None or self.verify.accepts(e) for e in entries]
         was_live = self._live
-        first_live = next(
-            (i for i, e in enumerate(entries) if self._judge_live(e, started)), len(entries)
+        first_live = (
+            0
+            if was_live
+            else next(
+                (i for i, e in enumerate(entries) if accepted[i] and self._is_current(e, started)),
+                len(entries),
+            )
         )
         messages = parse_frame(
             {"messages": entries[:first_live]}, decode_txs=decode_backlog
@@ -321,7 +327,9 @@ class FeedConsumer:
         for i, (entry, msg) in enumerate(zip(entries, messages, strict=True)):
             live = i >= first_live
             if i == first_live and not was_live:
-                # Here, not in _judge_live: this frame's backlog has been counted by now.
+                # Only now: `is_live` stays false while this frame's backlog is delivered,
+                # and the backlog has been counted.
+                self._live = True
                 _log.info(
                     "live at seq %d — %d backlog messages skipped",
                     msg.seq,
@@ -330,7 +338,7 @@ class FeedConsumer:
             # Verify before the watermark is consulted, not after. Both branches below
             # can move the watermark — forward for a new message, *backward* for a
             # reorg — so a message that cannot be trusted must not reach either.
-            if self.verify is not None and not self.verify.accepts(entry):
+            if not accepted[i]:
                 self._reject(entry, msg.seq)
                 continue
             if msg.seq <= self._highest_seq:

@@ -69,3 +69,38 @@ def test_the_live_log_counts_only_this_connections_backlog(caplog):
         run(consumer, frame(stamped(3, 0)))
     (line,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("live")]
     assert line == "live at seq 3 — 0 backlog messages skipped"
+
+
+def test_backlog_is_delivered_before_the_consumer_reports_live():
+    consumer = FeedConsumer()
+    seen = [
+        (m.seq, consumer.is_live)
+        for m in consumer._frame(
+            frame(stamped(1, 30), stamped(2, 20), stamped(3, 0)), time.time(), False
+        )
+    ]
+    assert seen == [(1, False), (2, False), (3, True)]
+
+
+class _AcceptsAllBut:
+    """A verifier that rejects one sequence number: an injected, unsigned entry."""
+
+    chain_id = 4663
+    signers = frozenset({b"\x01" * 20})
+
+    def __init__(self, forged: int):
+        self.forged = forged
+
+    def accepts(self, entry: dict) -> bool:
+        return entry["sequenceNumber"] != self.forged
+
+    def signer_of(self, entry: dict) -> None:
+        return None
+
+
+def test_an_unverified_entry_cannot_make_the_backlog_live():
+    """A fresh timestamp on a forged entry must not promote the real backlog after it."""
+    consumer = FeedConsumer(verify=_AcceptsAllBut(forged=2))
+    out = run(consumer, frame(stamped(1, 30), stamped(2, 0), stamped(3, 20), stamped(4, 0)))
+    assert [(m.seq, m.live) for m in out] == [(1, False), (3, False), (4, True)]
+    assert consumer.stats["unverified_messages"] == 1
