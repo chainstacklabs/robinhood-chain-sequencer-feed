@@ -158,58 +158,67 @@ async def watch(args: argparse.Namespace) -> None:
     show_sender = keep.wants_sender
     shown = 0
 
-    # aclosing, not a bare `async for` + break: the generator is suspended inside the
-    # websocket context manager, and letting the GC close it later unwinds that from
-    # the wrong task. The timeout goes inside it so it unwinds first, leaving a live
-    # generator for aclosing to shut down.
-    async with contextlib.aclosing(consumer.live()) as stream:
-        # asyncio.timeout, not a deadline checked per message: the whole point of
-        # --seconds is to bound a run that might see no messages at all.
-        with contextlib.suppress(TimeoutError):
-            async with asyncio.timeout(args.seconds) if args.seconds else _forever():
-                async for msg in stream:
-                    kept = [(t, keep.keep(t)) for t in msg.txs]
-                    txs = [(t, i) for t, i in kept if i is not None]
-                    if not txs and keep.active:
-                        continue
-                    shown += len(txs)
+    try:
+        # aclosing, not a bare `async for` + break: the generator is suspended inside the
+        # websocket context manager, and letting the GC close it later unwinds that from
+        # the wrong task. The timeout goes inside it so it unwinds first, leaving a live
+        # generator for aclosing to shut down.
+        async with contextlib.aclosing(consumer.live()) as stream:
+            # asyncio.timeout, not a deadline checked per message: the whole point of
+            # --seconds is to bound a run that might see no messages at all.
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(args.seconds) if args.seconds else _forever():
+                    async for msg in stream:
+                        kept = [(t, keep.keep(t)) for t in msg.txs]
+                        txs = [(t, i) for t, i in kept if i is not None]
+                        if not txs and keep.active:
+                            continue
+                        shown += len(txs)
 
-                    if args.json:
-                        print(
-                            json.dumps(
-                                {
-                                    "seq": msg.seq,
-                                    "timestamp": msg.timestamp,
-                                    "received_at": round(msg.received_at, 6),
-                                    "kind": msg.l1_kind_name,
-                                    "from_parent_chain": msg.from_parent_chain,
-                                    "txs": [tx_json(t, intents, show_sender) for t, intents in txs],
-                                }
-                            ),
-                            flush=True,
-                        )
-                    else:
-                        tag = "" if not msg.from_parent_chain else f" [{msg.l1_kind_name}]"
-                        print(f"seq {msg.seq}{tag}  {len(txs)} tx", flush=True)
-                        for t, intents in txs:
-                            # Full hash: a truncated one is only good for eyeballing,
-                            # and you generally want to paste this into an explorer or
-                            # a node call. Addresses are elided — use --json for ones
-                            # you can feed back into --to / --sender.
-                            who = f"{short(t.sender, '?')} -> " if show_sender else ""
+                        if args.json:
                             print(
-                                f"    {t.hash}  {t.kind:<8} {who}"
-                                f"{short(t.to)}  {t.selector_hex or ''}",
+                                json.dumps(
+                                    {
+                                        "seq": msg.seq,
+                                        "timestamp": msg.timestamp,
+                                        "received_at": round(msg.received_at, 6),
+                                        "kind": msg.l1_kind_name,
+                                        "from_parent_chain": msg.from_parent_chain,
+                                        "txs": [
+                                            tx_json(t, intents, show_sender) for t, intents in txs
+                                        ],
+                                    }
+                                ),
                                 flush=True,
                             )
-                            for i in intents:
-                                print(f"        ↳ {describe(i)}", flush=True)
+                        else:
+                            tag = "" if not msg.from_parent_chain else f" [{msg.l1_kind_name}]"
+                            print(f"seq {msg.seq}{tag}  {len(txs)} tx", flush=True)
+                            for t, intents in txs:
+                                # Full hash: a truncated one is only good for eyeballing,
+                                # and you generally want to paste this into an explorer or
+                                # a node call. Addresses are elided — use --json for ones
+                                # you can feed back into --to / --sender.
+                                who = f"{short(t.sender, '?')} -> " if show_sender else ""
+                                print(
+                                    f"    {t.hash}  {t.kind:<8} {who}"
+                                    f"{short(t.to)}  {t.selector_hex or ''}",
+                                    flush=True,
+                                )
+                                for i in intents:
+                                    print(f"        ↳ {describe(i)}", flush=True)
+    except asyncio.CancelledError:
+        # Ctrl-C: asyncio.run cancels this task, and the summary is still owed.
+        _summary(consumer.stats, shown, keep.active, args.verify)
+        raise
+    _summary(consumer.stats, shown, keep.active, args.verify)
 
-    s = consumer.stats
-    counted = "matched" if keep.active else "seen"
+
+def _summary(s: dict, shown: int, filtered: bool, verified: bool) -> None:
+    counted = "matched" if filtered else "seen"
     # Report the verification result even when it is zero. "0 unverified" is the whole
     # point of having asked; leaving it out reads the same as not having checked.
-    checked = f", {s['unverified_messages']} unverified dropped" if args.verify else ""
+    checked = f", {s['unverified_messages']} unverified dropped" if verified else ""
     print(
         f"# {shown} transactions {counted} | {s['live_messages']} live messages, "
         f"{s['backlog_messages']} backlog skipped{checked}, "

@@ -17,12 +17,14 @@ is why `live()` skips decoding transactions for messages it is going to drop
 anyway. Anything you *time* before the drain is history racing the present.
 
 **Reconnects.** On reconnect we ask for the highest sequence number already seen,
-which trims the replay to messages we actually missed. We ask for that number
-rather than the next one on purpose: a sequence number past the relay's tail is not
-found in its lookup map, and Nitro's documented fallback for a failed lookup is to
-send *the entire backlog* (`clientconnection.go`, "error finding requested sequence
-number in backlog: sending the entire backlog instead"). Re-requesting the last
-seen number is always in range, and costs exactly one duplicate, which is dropped.
+which trims the replay to messages we actually missed. Once the first backlog has
+drained, that replay is delivered although it is seconds old: it is what you missed,
+not history. We ask for that number rather than the next one on purpose: a sequence
+number past the relay's tail is not found in its lookup map, and Nitro's documented
+fallback for a failed lookup is to send *the entire backlog* (`clientconnection.go`,
+"error finding requested sequence number in backlog: sending the entire backlog
+instead"). Re-requesting the last seen number is always in range, and costs exactly
+one duplicate, which is dropped.
 
 **Reorgs.** A re-sent sequence number is not necessarily a duplicate. Nitro has no
 reorg message type at all: `addMessagesAndReorg` re-broadcasts from the reorg point, so
@@ -62,9 +64,10 @@ setup; `logging.getLogger("rhfeed").setLevel(...)` mutes or unmutes the rest.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from urllib.parse import urlsplit
 
 import websockets
@@ -89,11 +92,15 @@ TESTNET_FEED = "wss://feed.testnet.chain.robinhood.com"
 
 FEED_CLIENT_VERSION = "Arbitrum-Feed-Client-Version"
 REQUESTED_SEQ = "Arbitrum-Requested-Sequence-Number"
-#: Sent by Nitro relays and by Conduit's feeds. Robinhood's public edge sends none,
-#: so its two feeds are known by URL instead.
+#: Sent by Nitro relays and by Conduit's and Arbitrum Nova's feeds. The public edges of
+#: Robinhood Chain and Arbitrum One send none, so their feeds are known by URL instead.
 CHAIN_ID = "Arbitrum-Chain-Id"
 #: Testnet's is eth_chainId on rpc.testnet.chain.robinhood.com, 2026-10-29.
-KNOWN_CHAIN_IDS = {MAINNET_FEED: MAINNET_CHAIN_ID, TESTNET_FEED: 46630}
+KNOWN_CHAIN_IDS = {
+    MAINNET_FEED: MAINNET_CHAIN_ID,
+    TESTNET_FEED: 46630,
+    "wss://arb1.arbitrum.io/feed": 42161,
+}
 
 
 class WrongChain(Exception):
@@ -118,6 +125,12 @@ def _redact(url: str) -> str:
     ):
         return url
     return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}/…"
+
+
+def _is_relay(url: str) -> bool:
+    """Whether the URL looks like a relay you run: plain ws://, as `docker compose`
+    serves it. The public feeds are wss://, with no relay or Docker behind them."""
+    return urlsplit(url).scheme == "ws"
 
 
 class FeedConsumer:
@@ -152,9 +165,10 @@ class FeedConsumer:
         self.max_backlog_seconds = max_backlog_seconds
         self.reconnect_delay = reconnect_delay
         self.max_reconnect_delay = max_reconnect_delay
-        #: Warn after this long with an open connection and no frames. The chain
+        #: Warn after this long with an open connection and no frames. Robinhood Chain
         #: produces several blocks a second, so silence this long is a fault
-        #: somewhere, usually the relay's own upstream. 0 disables the check.
+        #: somewhere, usually the relay's own upstream. A quiet chain, such as Arbitrum
+        #: Nova, can go minutes without a block. 0 disables the check.
         self.stall_warning = stall_warning
         #: How many recent block hashes to keep for reorg detection. At ~115 ms a block
         #: the default covers about two minutes, comfortably past the 10-second window
@@ -229,11 +243,13 @@ class FeedConsumer:
                 if not warned:
                     warned = True  # once per stall, not once per poll
                     _log.warning(
-                        "no frames from %s for %.0fs — connected, but nothing is arriving. "
-                        "Usually the relay's own upstream is down "
-                        "(check: docker compose logs relay)",
+                        "no frames from %s for %.0fs — connected, but nothing is arriving. %s",
                         _redact(self.url),
                         idle,
+                        "Usually the relay's own upstream is down "
+                        "(check: docker compose logs relay)"
+                        if _is_relay(self.url)
+                        else "The feed is down or the chain is idle",
                     )
                 continue
 
@@ -246,7 +262,7 @@ class FeedConsumer:
                     self.stats["backlog_messages"],
                 )
 
-    async def messages(self, decode_backlog: bool = True) -> AsyncIterator[FeedMessage]:
+    async def messages(self, decode_backlog: bool = True) -> AsyncGenerator[FeedMessage, None]:
         """Yield every message, backlog first, reconnecting until cancelled.
 
         Each message carries `.live`. With `decode_backlog=False`, messages from
@@ -286,7 +302,9 @@ class FeedConsumer:
                         failures = 0
                         delay = self.reconnect_delay
                         started = time.time()
-                        self._live = False
+                        # `_live` stays as it was. Once live, the replay after a
+                        # reconnect is what was missed while disconnected, so it is
+                        # delivered, not skipped as backlog.
                         self._backlog_at_connect = self.stats["backlog_messages"]
                         self._last_frame_at = time.monotonic()
                         async for raw in ws:
@@ -313,7 +331,7 @@ class FeedConsumer:
                         str(exc).replace(self.url, _redact(self.url)),
                         delay,
                         "; is the relay running? (docker compose up -d relay)"
-                        if failures == 1
+                        if failures == 1 and _is_relay(self.url)
                         else "",
                     )
                     self._last_frame_at = 0.0
@@ -469,8 +487,17 @@ class FeedConsumer:
             self.verify.chain_id,
         )
 
-    async def live(self) -> AsyncIterator[FeedMessage]:
-        """Only messages from after the backlog drained, and only those decoded."""
-        async for msg in self.messages(decode_backlog=False):
-            if msg.live:
-                yield msg
+    async def live(self) -> AsyncGenerator[FeedMessage, None]:
+        """Only messages from after the backlog drained, and only those decoded.
+
+        After a reconnect this includes the messages missed while disconnected, which
+        arrive seconds old. Check `msg.timestamp` if staleness matters to you.
+        """
+        # aclosing, so that leaving this generator early also closes the connection
+        # inside messages(), here and now. Left to the garbage collector, the two close
+        # concurrently while asyncio.run shuts down, and websockets reports
+        # "aclose(): asynchronous generator is already running".
+        async with contextlib.aclosing(self.messages(decode_backlog=False)) as stream:
+            async for msg in stream:
+                if msg.live:
+                    yield msg

@@ -16,6 +16,7 @@ Sender is read only for the handful that match, which is exactly the point of
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from collections import Counter
 
@@ -72,4 +73,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    with contextlib.suppress(KeyboardInterrupt):  # Ctrl-C is how this stops
+        asyncio.run(main())

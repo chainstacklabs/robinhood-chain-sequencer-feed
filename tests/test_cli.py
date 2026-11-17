@@ -140,6 +140,35 @@ class _NoFeed:
         return empty()
 
 
+class _Forever(_NoFeed):
+    """A consumer that connects and then hears nothing, until Ctrl-C."""
+
+    def live(self):
+        async def wait():
+            await asyncio.Event().wait()
+            yield  # pragma: no cover
+
+        return wait()
+
+
+def test_ctrl_c_still_prints_the_summary(monkeypatch, capsys):
+    """Ctrl-C is how the README stops a run. asyncio.run turns it into a cancellation of
+    watch(), and the summary, with the --verify count, used to be lost with it."""
+    import rhfeed.cli as cli_module
+
+    monkeypatch.setattr(cli_module, "FeedConsumer", _Forever)
+
+    async def interrupted() -> None:
+        task = asyncio.create_task(cli_module.watch(build_parser().parse_args(["--verify"])))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(interrupted())
+    assert "0 unverified dropped" in capsys.readouterr().err
+
+
 # --------------------------------------------------------------------------- #
 # output
 # --------------------------------------------------------------------------- #
@@ -181,6 +210,49 @@ def test_an_unreachable_relay_is_reported_not_swallowed(caplog):
     assert "cannot read ws://127.0.0.1:1" in warnings[0]
     assert "is the relay running" in warnings[0]
     assert consumer.stats["reconnects"] > 0
+
+
+def test_a_public_feed_that_cannot_be_reached_is_not_blamed_on_docker(caplog, monkeypatch):
+    """Only a relay you run has `docker compose` behind it."""
+    from rhfeed import consume as consume_module
+
+    def _refuse(url, **kwargs):
+        raise OSError("no feed in a test")
+
+    monkeypatch.setattr(consume_module.websockets, "connect", _refuse)
+    consumer = FeedConsumer("wss://feed.example.com", reconnect_delay=0.05)
+    with caplog.at_level(logging.WARNING, logger="rhfeed.consume"):
+        asyncio.run(_drain(consumer, 0.3))
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert warnings
+    assert not any("docker" in w or "relay" in w for w in warnings), warnings
+
+
+@pytest.mark.parametrize(
+    ("url", "hint"),
+    [("ws://127.0.0.1:9642", "docker compose logs relay"), ("wss://nova.arbitrum.io/feed", "idle")],
+)
+def test_a_stall_names_the_likely_cause_for_that_kind_of_feed(url, hint, caplog):
+    """A quiet relay usually lost its upstream. A public feed has no relay to check, and
+    a chain such as Arbitrum Nova can go minutes without a block."""
+    consumer = FeedConsumer(url, stall_warning=0.2)
+
+    async def run() -> None:
+        watchdog = asyncio.create_task(consumer._monitor())
+        consumer._last_frame_at = time.monotonic() - 10
+        await asyncio.sleep(0.3)
+        watchdog.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watchdog
+
+    with caplog.at_level(logging.WARNING, logger="rhfeed.consume"):
+        asyncio.run(run())
+
+    (stall,) = [r.getMessage() for r in caplog.records if "nothing is arriving" in r.getMessage()]
+    assert hint in stall
+    if url.startswith("wss"):
+        assert "docker" not in stall
 
 
 @pytest.mark.parametrize(
