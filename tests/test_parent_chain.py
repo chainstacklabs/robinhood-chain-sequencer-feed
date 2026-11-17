@@ -168,6 +168,8 @@ class _Conn:
     [
         ("ws://relay", {"Arbitrum-Chain-Id": "99801"}, MAINNET_VERIFIER, 99801),
         (MAINNET_FEED, {}, None, 4663),
+        # Arbitrum One's edge sends no header either; it carries retryables every few minutes.
+        ("wss://arb1.arbitrum.io/feed", {}, None, 42161),
         ("ws://relay", {}, MAINNET_VERIFIER, 4663),
         ("ws://relay", {}, None, None),
     ],

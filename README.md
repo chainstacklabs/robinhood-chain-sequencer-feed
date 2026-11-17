@@ -101,8 +101,8 @@ Other calls give no intent. Amounts are raw integers.
 
 A retryable ticket or an ETH deposit from the parent chain carries the transaction ArbOS builds
 from it, type `0x69` or `0x64`, with the hash in the block. Its hash needs the chain ID, which
-`FeedConsumer` reads from the feed or knows for the Robinhood feeds; pass `chain_id=` for others.
-The auto-redeem (`0x68`) is not built: it needs the block's base fee.
+`FeedConsumer` reads from the feed or knows for the Robinhood and Arbitrum One feeds; pass
+`chain_id=` for others. The auto-redeem (`0x68`) is not built: it needs the block's base fee.
 
 In an ERC-4337 bundle, a bundler sends the transaction. The wallet is in the calldata. The
 decoder writes this wallet to the `actor` field. In a Relay fill, `actor` is the wallet that
@@ -218,13 +218,14 @@ Orbit chains. Elysium, the Kinetiq chain on Hyperliquid's HyperEVM, is one of th
 reads all of them with no code changes. Give the feed URL:
 
 ```bash
-uv run rhfeed --feed wss://relay-elysium-testnet.t.conduit.xyz/
+uv run rhfeed --feed wss://relay-elysium-mainnet.t.conduit.xyz/
 ```
 
 | Chain | Feed | Chain ID | Block number |
 |---|---|---|---|
 | Arbitrum One | `wss://arb1.arbitrum.io/feed` | 42161 | `seq` + 22207817 |
 | Arbitrum Nova | `wss://nova.arbitrum.io/feed` | 42170 | `seq` |
+| Elysium mainnet | `wss://relay-elysium-mainnet.t.conduit.xyz/` | 99901 | `seq` |
 | Elysium testnet | `wss://relay-elysium-testnet.t.conduit.xyz/` | 99801 | `seq` |
 
 On these chains, the transaction hashes from `rhfeed` are the same as in the blocks on the

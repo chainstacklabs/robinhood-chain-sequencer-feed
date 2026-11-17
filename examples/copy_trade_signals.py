@@ -24,6 +24,7 @@ where `to` is the EntryPoint or the Relay router, never the token.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 import time
@@ -84,7 +85,8 @@ async def main(follow: set[bytes]) -> None:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit(f"usage: {sys.argv[0]} <address> [address ...]")
-    asyncio.run(main({addr(a) for a in sys.argv[1:]}))
+    with contextlib.suppress(KeyboardInterrupt):  # Ctrl-C is how this stops
+        asyncio.run(main({addr(a) for a in sys.argv[1:]}))
 
 # ---------------------------------------------------------------------------
 # Before you trade on this

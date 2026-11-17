@@ -21,15 +21,15 @@
 services:
   relay:
     # The build mainnet runs. The sequencer answers `web3_clientVersion` with
-    # v3.12.2+5f02f3f-20261014T220458Z, and Offchain Labs tagged v3.12.2 at the
-    # same commit.
+    # v3.12.4-rc.3+960ca0a-20261110T061047Z, and this image's relay reports the same
+    # commit and build time.
     #
-    # Checked against v3.12.1 (70fa99a) in source, on 2026-10-27. The feed files the
-    # relay depends on are byte-identical. v3.12.1 added an opt-in REST backfill to
-    # `broadcastclient.go`; `relay/relay.go` opts out of it and refuses
-    # `--node.feed.input.rest.enable`, so the upstream still sends the relay its full
-    # backlog. The relay still runs with no address verifier.
-    image: offchainlabs/nitro-node:v3.12.2-5f02f3f-stripped
+    # Offchain Labs has not published the source of 960ca0a yet, so it was checked
+    # against v3.12.2 (5f02f3f) as a black box, on 2026-11-17: `relay --help` is
+    # identical, and both relays served the same mainnet messages with the same
+    # transaction hashes and valid signatures. The relay still runs with no address
+    # verifier.
+    image: offchainlabs/nitro-node:v3.12.4-960ca0a-stripped
     entrypoint: relay
     restart: unless-stopped
     ports:

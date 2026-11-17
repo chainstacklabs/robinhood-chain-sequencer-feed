@@ -7,9 +7,9 @@ fast paths replace.
 
     uv run --extra dev pytest
 
-`tests/frames.jsonl` is optional. When it is present (write one with
-`rhfeed capture --seconds 60 tests/frames.jsonl`) the same comparison runs over
-every transaction in it, which is the check that actually matters.
+The same comparison runs over every transaction in `tests/frames.jsonl`, captured
+mainnet frames, which is the check that actually matters. To run it over your own
+capture, save raw frames there one per line, as `examples/replay_capture.py` describes.
 """
 
 from __future__ import annotations
