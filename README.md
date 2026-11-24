@@ -5,11 +5,11 @@
 </p>
 
 <p align="center">
-  • <a target="_blank" href="https://chainstack.com/">Homepage</a> •
-  <a target="_blank" href="https://chainstack.com/protocols/">Supported protocols</a> •
-  <a target="_blank" href="https://chainstack.com/blog/">Chainstack blog</a> •
-  <a target="_blank" href="https://docs.chainstack.com/quickstart/">Blockchain API reference</a> • <br> 
-  • <a target="_blank" href="https://console.chainstack.com/user/account/create">Start for free</a> •
+  • <a target="_blank" href="https://chainstack.com/?utm_source=github&utm_medium=referral&utm_campaign=robinhood-chain-sequencer-feed">Homepage</a> •
+  <a target="_blank" href="https://chainstack.com/protocols/?utm_source=github&utm_medium=referral&utm_campaign=robinhood-chain-sequencer-feed">Supported protocols</a> •
+  <a target="_blank" href="https://chainstack.com/blog/?utm_source=github&utm_medium=referral&utm_campaign=robinhood-chain-sequencer-feed">Chainstack blog</a> •
+  <a target="_blank" href="https://docs.chainstack.com/reference/blockchain-apis?utm_source=github&utm_medium=referral&utm_campaign=robinhood-chain-sequencer-feed">Blockchain API reference</a> • <br> 
+  • <a target="_blank" href="https://console.chainstack.com/sign-up?utm_source=github&utm_medium=referral&utm_campaign=robinhood-chain-sequencer-feed">Start for free</a> •
 </p>
 
 # Robinhood Chain sequencer feed decoder
@@ -197,7 +197,7 @@ message that fails is dropped and counted in `consumer.stats["unverified_message
 
 Robinhood [documents](https://docs.robinhood.com/chain/connecting) the public endpoints as
 rate-limited and not for production. For receipts, logs and state, use a node. Chainstack has
-[Robinhood Chain nodes](https://docs.chainstack.com/reference/robinhood-getting-started).
+[Robinhood Chain nodes](https://docs.chainstack.com/reference/robinhood-getting-started?utm_source=github&utm_medium=referral&utm_campaign=robinhood-chain-sequencer-feed).
 
 ### A feed URL with a key
 
